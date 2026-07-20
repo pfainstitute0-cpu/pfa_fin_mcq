@@ -12,6 +12,8 @@ interface NavbarProps {
   questionCount: number;
   score: { correct: number; total: number };
   isAdmin: boolean;
+  studentInfo: { name: string; email: string; phone: string } | null;
+  onStudentLogout: () => void;
 }
 
 export default function Navbar({
@@ -24,6 +26,8 @@ export default function Navbar({
   questionCount,
   score,
   isAdmin,
+  studentInfo,
+  onStudentLogout,
 }: NavbarProps) {
   const certs: CertType[] = ["CMT", "CFA", "CFP", "FRM"];
   const levels: CertLevel[] = ["Level 1", "Level 2", "Level 3"];
@@ -148,9 +152,26 @@ export default function Navbar({
           )}
         </nav>
 
-        {/* Small badge displaying current selection on mobile */}
-        <div className="text-[10px] font-mono text-slate-400 uppercase font-bold tracking-wider">
-          {selectedCert} • {selectedLevel}
+        {/* Student details and Sign Out or fallback to cert */}
+        <div className="flex items-center gap-3 py-1.5 sm:py-0">
+          {studentInfo && (
+            <div className="flex items-center gap-2 bg-blue-50/75 border border-blue-100 rounded-xl px-3 py-1 text-xs" id="navbar-student-badge">
+              <div className="flex flex-col items-end">
+                <span className="font-bold text-slate-700 text-[10px] sm:text-xs">👤 {studentInfo.name}</span>
+                <span className="text-[9px] text-slate-500 font-mono hidden md:inline">{studentInfo.email}</span>
+              </div>
+              <button
+                onClick={onStudentLogout}
+                className="bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 font-bold text-[10px] px-2 py-0.5 border border-slate-200 hover:border-rose-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                id="btn-student-logout"
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
+          <div className="text-[10px] font-mono text-slate-400 uppercase font-bold tracking-wider hidden sm:block">
+            {selectedCert} • {selectedLevel}
+          </div>
         </div>
       </div>
     </header>

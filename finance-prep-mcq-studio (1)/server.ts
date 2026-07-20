@@ -167,10 +167,12 @@ app.post("/api/admin/login", (req, res) => {
 
     const adminConfig = loadJson(ADMIN_FILE, DEFAULT_ADMIN);
 
-    if (
-      email.trim().toLowerCase() === adminConfig.email.toLowerCase() &&
-      password === adminConfig.password
-    ) {
+    const inputEmail = email.trim().toLowerCase();
+    const inputPassword = password.trim();
+    const configuredEmail = adminConfig.email.trim().toLowerCase();
+    const configuredPassword = adminConfig.password.trim();
+
+    if (inputEmail === configuredEmail && inputPassword === configuredPassword) {
       const sessionToken = `token-admin-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
       return res.json({ success: true, token: sessionToken, message: "Welcome Admin!" });
     }
@@ -229,6 +231,30 @@ app.post("/api/admin/reset", (req, res) => {
   } catch (err) {
     console.error("Error resetting admin config:", err);
     res.status(500).json({ error: "Failed to update admin credentials." });
+  }
+});
+
+// 3.5 Public Student Verification for Returning Login
+app.post("/api/registered-students-public-check", (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required." });
+    }
+
+    const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    const student = students.find(
+      (s: any) => s && s.email && s.email.toLowerCase() === email.trim().toLowerCase()
+    );
+
+    if (student) {
+      res.json({ success: true, student: { name: student.name, email: student.email, phone: student.phone } });
+    } else {
+      res.json({ success: false, message: "No student found." });
+    }
+  } catch (err) {
+    console.error("Error looking up student:", err);
+    res.status(500).json({ error: "Internal server error during lookup." });
   }
 });
 

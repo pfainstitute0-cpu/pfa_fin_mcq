@@ -197,14 +197,29 @@ export default function App() {
     setScore({ correct: 0, total: 0 });
   };
 
+  const handleStudentLogout = () => {
+    if (window.confirm("Are you sure you want to sign out? This will return you to the student registration page, but your local practice progress will remain saved.")) {
+      setStudentInfo(null);
+      localStorage.removeItem("finance_prep_student_info");
+    }
+  };
+
   if (!studentInfo) {
     return (
-      <LeadGate
-        onUnlock={(info) => {
-          setStudentInfo(info);
-          localStorage.setItem("finance_prep_student_info", JSON.stringify(info));
-        }}
-      />
+      <>
+        <LeadGate
+          onUnlock={(info) => {
+            setStudentInfo(info);
+            localStorage.setItem("finance_prep_student_info", JSON.stringify(info));
+          }}
+          onAdminTrigger={() => setShowAdminLoginModal(true)}
+        />
+        <AdminLoginModal
+          isOpen={showAdminLoginModal}
+          onClose={() => setShowAdminLoginModal(false)}
+          onLoginSuccess={handleAdminLoginSuccess}
+        />
+      </>
     );
   }
 
@@ -225,6 +240,8 @@ export default function App() {
         questionCount={currentContextQuestions.length}
         score={score}
         isAdmin={isAdmin}
+        studentInfo={studentInfo}
+        onStudentLogout={handleStudentLogout}
       />
 
       {/* Main Content Area */}
