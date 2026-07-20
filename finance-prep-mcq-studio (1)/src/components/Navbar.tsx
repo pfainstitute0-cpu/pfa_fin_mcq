@@ -11,6 +11,7 @@ interface NavbarProps {
   setSelectedLevel: (level: CertLevel) => void;
   questionCount: number;
   score: { correct: number; total: number };
+  isAdmin: boolean;
 }
 
 export default function Navbar({
@@ -22,6 +23,7 @@ export default function Navbar({
   setSelectedLevel,
   questionCount,
   score,
+  isAdmin,
 }: NavbarProps) {
   const certs: CertType[] = ["CMT", "CFA", "CFP", "FRM"];
   const levels: CertLevel[] = ["Level 1", "Level 2", "Level 3"];
@@ -130,18 +132,20 @@ export default function Navbar({
             Performance Analytics
           </button>
 
-          <button
-            id="tab-custom"
-            onClick={() => setActiveTab("custom")}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
-              activeTab === "custom"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <PlusCircle className="w-4 h-4 text-amber-500" />
-            Add Custom MCQ (Admin)
-          </button>
+          {isAdmin && (
+            <button
+              id="tab-custom"
+              onClick={() => setActiveTab("custom")}
+              className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                activeTab === "custom"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <PlusCircle className="w-4 h-4 text-amber-500" />
+              Add Custom MCQ (Admin)
+            </button>
+          )}
         </nav>
 
         {/* Small badge displaying current selection on mobile */}

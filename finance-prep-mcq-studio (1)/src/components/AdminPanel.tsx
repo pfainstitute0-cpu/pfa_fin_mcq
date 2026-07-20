@@ -9,6 +9,11 @@ import { CertType, CertLevel, Question } from "../types";
 interface AdminPanelProps {
   currentCert: CertType;
   currentLevel: CertLevel;
+  isAdmin: boolean;
+  adminToken: string | null;
+  adminEmail: string;
+  onLogout: () => void;
+  onUpdateAdminEmail: (email: string) => void;
   onAddQuestion: (question: Question) => void;
   onAddBatchQuestions?: (questions: Question[]) => void;
 }
@@ -24,19 +29,14 @@ interface StudentLead {
 export default function AdminPanel({
   currentCert,
   currentLevel,
+  isAdmin,
+  adminToken,
+  adminEmail,
+  onLogout,
+  onUpdateAdminEmail,
   onAddQuestion,
   onAddBatchQuestions,
 }: AdminPanelProps) {
-  // Authentication state
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [password, setPassword] = useState("");
-  
-  // Login UI states
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-
   // Admin section sub-tabs
   const [adminTab, setAdminTab] = useState<"add" | "leads" | "settings">("add");
 
@@ -46,22 +46,15 @@ export default function AdminPanel({
   const [leadSearch, setLeadSearch] = useState("");
 
   // Settings update states
-  const [newGmail, setNewGmail] = useState("");
+  const [newGmail, setNewGmail] = useState(adminEmail);
   const [newPassword, setNewPassword] = useState("");
   const [settingsStatus, setSettingsStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
 
-  // Check existing session on load
+  // Sync newGmail input state when adminEmail prop changes
   useEffect(() => {
-    const savedToken = localStorage.getItem("finance_prep_admin_token");
-    const savedEmail = localStorage.getItem("finance_prep_admin_email") || "pfainstitute0@gmail.com";
-    if (savedToken) {
-      setAdminToken(savedToken);
-      setIsAdmin(true);
-      setAdminEmail(savedEmail);
-      setNewGmail(savedEmail);
-    }
-  }, []);
+    setNewGmail(adminEmail);
+  }, [adminEmail]);
 
   // Fetch leads when admin clicks the leads tab
   useEffect(() => {
@@ -69,48 +62,6 @@ export default function AdminPanel({
       fetchRegisteredLeads();
     }
   }, [isAdmin, adminToken, adminTab]);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-    setLoggingIn(true);
-
-    try {
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: adminEmail.trim(), password: password }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Invalid admin email or password.");
-      }
-
-      const data = await response.json();
-      if (data.success && data.token) {
-        localStorage.setItem("finance_prep_admin_token", data.token);
-        localStorage.setItem("finance_prep_admin_email", adminEmail.trim());
-        setAdminToken(data.token);
-        setIsAdmin(true);
-        setNewGmail(adminEmail.trim());
-        setPassword("");
-      }
-    } catch (err: any) {
-      setAuthError(err.message || "Network credentials verification failed.");
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("finance_prep_admin_token");
-    localStorage.removeItem("finance_prep_admin_email");
-    setAdminToken(null);
-    setIsAdmin(false);
-    setAdminTab("add");
-    setLeads([]);
-  };
 
   const fetchRegisteredLeads = async () => {
     if (!adminToken) return;
@@ -170,8 +121,7 @@ export default function AdminPanel({
       const data = await response.json();
       if (data.success) {
         setSettingsStatus({ type: "success", msg: "Admin Gmail ID & Password successfully updated! Please use these credentials next time you log in." });
-        setAdminEmail(newGmail.trim());
-        localStorage.setItem("finance_prep_admin_email", newGmail.trim());
+        onUpdateAdminEmail(newGmail.trim());
         setNewPassword("");
       }
     } catch (err: any) {
@@ -192,76 +142,16 @@ export default function AdminPanel({
   });
 
   if (!isAdmin) {
-    /* GATED LOGIN SCREEN */
+    /* ACCESS RESTRICTED SCREEN */
     return (
-      <div className="max-w-md mx-auto my-12" id="admin-login-wrapper">
-        <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
-          <div className="text-center space-y-2">
-            <div className="inline-flex p-3 bg-blue-50 text-blue-600 rounded-2xl mb-1 border border-blue-100">
-              <Lock className="w-6 h-6" />
-            </div>
-            <h2 className="font-display text-xl font-extrabold text-slate-900 tracking-tight">Admin Authentication Required</h2>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Adding custom questions, batch importing mock packs, and viewing student leads are administrative functions. Please authenticate with your Gmail credentials.
-            </p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4" id="admin-login-form">
-            {authError && (
-              <div className="bg-rose-50 border border-rose-100 text-rose-800 text-xs p-3.5 rounded-xl flex items-start gap-2">
-                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <p>{authError}</p>
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Admin Gmail / Email ID</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 pointer-events-none">
-                  <Mail className="w-4 h-4" />
-                </span>
-                <input
-                  id="admin-email-field"
-                  type="email"
-                  required
-                  placeholder="e.g. pfainstitute0@gmail.com"
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                />
-              </div>
-              <p className="text-[10px] text-slate-400 font-medium">Default setup email is: <code className="bg-slate-100 px-1 py-0.5 rounded font-bold">pfainstitute0@gmail.com</code></p>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Master Password</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 pointer-events-none">
-                  <KeyRound className="w-4 h-4" />
-                </span>
-                <input
-                  id="admin-password-field"
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                />
-              </div>
-              <p className="text-[10px] text-slate-400 font-medium">Default initial password is: <code className="bg-slate-100 px-1 py-0.5 rounded font-bold">admin</code></p>
-            </div>
-
-            <button
-              id="admin-login-submit"
-              type="submit"
-              disabled={loggingIn}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-100 transition-all cursor-pointer mt-2"
-            >
-              {loggingIn ? "Verifying..." : "Sign In to Admin Panel"}
-            </button>
-          </form>
+      <div className="max-w-md mx-auto my-12 text-center space-y-4" id="admin-restricted-wrapper">
+        <div className="inline-flex p-3 bg-amber-50 text-amber-600 rounded-2xl mb-1 border border-amber-100">
+          <ShieldAlert className="w-8 h-8" />
         </div>
+        <h2 className="font-display text-xl font-extrabold text-slate-900 tracking-tight">Access Restricted</h2>
+        <p className="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
+          You are not currently authenticated as an administrator. Please click the <strong>Admin Login</strong> button in the bottom-right corner to authenticate.
+        </p>
       </div>
     );
   }
@@ -331,7 +221,7 @@ export default function AdminPanel({
           </div>
 
           <button
-            onClick={handleLogout}
+            onClick={onLogout}
             className="p-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-xl transition-all cursor-pointer"
             title="Secure Logout"
           >

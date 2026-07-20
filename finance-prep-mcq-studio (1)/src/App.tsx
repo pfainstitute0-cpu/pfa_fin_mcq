@@ -6,6 +6,7 @@ import SyllabusViewer from "./components/SyllabusViewer";
 import LeadGate from "./components/LeadGate";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
+import AdminLoginModal from "./components/AdminLoginModal";
 import { CertType, CertLevel, Question } from "./types";
 import { defaultQuestions } from "./data/defaultQuestions";
 
@@ -13,6 +14,53 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"practice" | "syllabus" | "analytics" | "custom">("practice");
   const [selectedCert, setSelectedCert] = useState<CertType>("CMT");
   const [selectedLevel, setSelectedLevel] = useState<CertLevel>("Level 1");
+
+  // Lifted Admin state management
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
+
+  // Sync admin authentication session on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem("finance_prep_admin_token");
+    const savedEmail = localStorage.getItem("finance_prep_admin_email") || "pfainstitute0@gmail.com";
+    if (savedToken) {
+      setAdminToken(savedToken);
+      setIsAdmin(true);
+      setAdminEmail(savedEmail);
+    }
+  }, []);
+
+  const handleAdminLoginSuccess = (token: string, email: string) => {
+    localStorage.setItem("finance_prep_admin_token", token);
+    localStorage.setItem("finance_prep_admin_email", email);
+    setAdminToken(token);
+    setIsAdmin(true);
+    setAdminEmail(email);
+    setActiveTab("custom"); // direct the authenticated admin immediately to the custom MCQ panel
+  };
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem("finance_prep_admin_token");
+    localStorage.removeItem("finance_prep_admin_email");
+    setAdminToken(null);
+    setIsAdmin(false);
+    setActiveTab("practice");
+  };
+
+  const handleUpdateAdminEmail = (newEmail: string) => {
+    setAdminEmail(newEmail);
+    localStorage.setItem("finance_prep_admin_email", newEmail);
+  };
+
+  const handleAdminPortalTrigger = () => {
+    if (isAdmin) {
+      setActiveTab("custom");
+    } else {
+      setShowAdminLoginModal(true);
+    }
+  };
 
   // Load student information from local storage for lead generation gatekeeping
   const [studentInfo, setStudentInfo] = useState<{ name: string; email: string; phone: string } | null>(() => {
@@ -161,6 +209,7 @@ export default function App() {
         setSelectedLevel={setSelectedLevel}
         questionCount={currentContextQuestions.length}
         score={score}
+        isAdmin={isAdmin}
       />
 
       {/* Main Content Area */}
@@ -188,6 +237,11 @@ export default function App() {
           <AdminPanel
             currentCert={selectedCert}
             currentLevel={selectedLevel}
+            isAdmin={isAdmin}
+            adminToken={adminToken}
+            adminEmail={adminEmail}
+            onLogout={handleAdminLogout}
+            onUpdateAdminEmail={handleUpdateAdminEmail}
             onAddQuestion={handleAddSingleQuestion}
             onAddBatchQuestions={handleAddQuestions}
           />
@@ -207,11 +261,11 @@ export default function App() {
             </p>
           </div>
 
-          <div className="flex items-center gap-4 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+          <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider justify-center md:justify-end">
             {score.total > 0 && (
               <button
                 onClick={handleResetScore}
-                className="text-[10px] text-rose-500 hover:text-rose-700 transition-all uppercase tracking-wider font-mono cursor-pointer"
+                className="text-[10px] text-rose-500 hover:text-rose-700 transition-all uppercase tracking-wider font-mono cursor-pointer animate-pulse"
                 id="btn-reset-score"
               >
                 Reset Stats
@@ -225,9 +279,24 @@ export default function App() {
             <span>CFP Board®</span>
             <span className="text-slate-200">•</span>
             <span>GARP® (FRM)</span>
+            <span className="text-slate-200">|</span>
+            <button
+              id="admin-footer-trigger"
+              onClick={handleAdminPortalTrigger}
+              className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-all uppercase tracking-wider font-bold cursor-pointer shrink-0"
+            >
+              {isAdmin ? "Admin Panel" : "Admin Login"}
+            </button>
           </div>
         </div>
       </footer>
+
+      {/* Admin Login Modal (Hidden by default, secure layout) */}
+      <AdminLoginModal
+        isOpen={showAdminLoginModal}
+        onClose={() => setShowAdminLoginModal(false)}
+        onLoginSuccess={handleAdminLoginSuccess}
+      />
     </div>
   );
 }
