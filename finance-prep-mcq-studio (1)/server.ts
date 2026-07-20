@@ -78,6 +78,18 @@ app.post("/api/register-student", (req, res) => {
     students.push(newStudent);
     saveJson(STUDENTS_FILE, students);
 
+    // Forward to Google Sheets Web App if configured
+    const sheetsUrl = process.env.GOOGLE_SHEETS_WEB_APP_URL || process.env.VITE_GOOGLE_SHEETS_WEB_APP_URL;
+    if (sheetsUrl) {
+      fetch(sheetsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newStudent)
+      }).catch((err: any) => {
+        console.error("Failed to forward lead to Google Sheets:", err);
+      });
+    }
+
     res.json({ success: true, message: "Registration successful!", student: newStudent });
   } catch (err: any) {
     console.error("Error registering student:", err);

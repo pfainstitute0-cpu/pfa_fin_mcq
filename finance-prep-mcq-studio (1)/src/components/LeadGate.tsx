@@ -32,7 +32,10 @@ export default function LeadGate({ onUnlock }: LeadGateProps) {
     }
 
     setSubmitting(true);
+    let registrationSuccess = false;
+
     try {
+      // 1. Try Express backend first
       const response = await fetch("/api/register-student", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,27 +46,66 @@ export default function LeadGate({ onUnlock }: LeadGateProps) {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to submit registration. Please try again.");
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        setSuccess(true);
-        // Micro-timeout for elegant screen change
-        setTimeout(() => {
-          onUnlock({
-            name: name.trim(),
-            email: email.trim().toLowerCase(),
-            phone: phone.trim(),
-          });
-        }, 1200);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          registrationSuccess = true;
+        } else {
+          throw new Error(data.error || "Server refused registration request.");
+        }
       } else {
-        throw new Error(data.error || "An error occurred.");
+        throw new Error(`Server returned status ${response.status}`);
       }
-    } catch (err: any) {
-      setError(err.message || "Network error. Please try again.");
-    } finally {
+    } catch (backendErr: any) {
+      console.warn("Backend registration failed. Checking Google Sheets bypass...", backendErr);
+      
+      // 2. Fallback: Submit directly from browser to Google Sheets if configured
+      const googleSheetsUrl = (import.meta as any).env.VITE_GOOGLE_SHEETS_WEB_APP_URL;
+      if (googleSheetsUrl) {
+        try {
+          const sheetResponse = await fetch(googleSheetsUrl, {
+            method: "POST",
+            mode: "no-cors", // 'no-cors' mode is extremely safe and prevents browser preflight blocks from Google Apps Script Web Apps
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              name: name.trim(),
+              email: email.trim().toLowerCase(),
+              phone: phone.trim(),
+              id: `student-vercel-${Date.now()}`,
+              registeredAt: new Date().toISOString()
+            }),
+          });
+
+          // Under 'no-cors', we might not see the response contents/status, but the request successfully reaches the Web App.
+          // We can proceed under the assumption that it sent successfully or log success.
+          registrationSuccess = true;
+        } catch (sheetErr: any) {
+          console.error("Google Sheets direct submission failed:", sheetErr);
+          setError("Google Sheets integration failed. Please check your App Script deployment URL and try again.");
+          setSubmitting(false);
+          return;
+        }
+      } else {
+        setError(
+          `Failed to submit registration: ${backendErr.message || "Connection refused"}. If this application is hosted as a static site on Vercel/GitHub Pages, please define 'VITE_GOOGLE_SHEETS_WEB_APP_URL' in your environment settings to save student data directly to Google Sheets.`
+        );
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    if (registrationSuccess) {
+      setSuccess(true);
+      // Micro-timeout for elegant screen change
+      setTimeout(() => {
+        onUnlock({
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
+        });
+      }, 1200);
       setSubmitting(false);
     }
   };
