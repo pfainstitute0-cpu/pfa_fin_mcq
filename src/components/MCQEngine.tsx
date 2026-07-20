@@ -12,7 +12,7 @@ interface MCQEngineProps {
   allQuestions: Question[];
   onAddGeneratedQuestions: (questions: Question[]) => void;
   onClearQuestionsByContext: (cert: CertType, level: CertLevel) => void;
-  onAddScore: (isCorrect: boolean) => void;
+  onAddScore: (isCorrect: boolean, question: Question, selectedIndex: number) => void;
 }
 
 export default function MCQEngine({
@@ -109,7 +109,7 @@ export default function MCQEngine({
       [activeQuestion.id]: optIdx,
     });
 
-    onAddScore(isCorrect);
+    onAddScore(isCorrect, activeQuestion, optIdx);
   };
 
   const handleResetQuiz = () => {

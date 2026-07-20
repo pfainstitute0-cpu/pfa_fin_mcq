@@ -3,14 +3,29 @@ import { BookOpen, GraduationCap, ArrowRight, CheckCircle2, Award } from "lucide
 import Navbar from "./components/Navbar";
 import MCQEngine from "./components/MCQEngine";
 import SyllabusViewer from "./components/SyllabusViewer";
-import CustomQuestionForm from "./components/CustomQuestionForm";
+import LeadGate from "./components/LeadGate";
+import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import AdminPanel from "./components/AdminPanel";
 import { CertType, CertLevel, Question } from "./types";
 import { defaultQuestions } from "./data/defaultQuestions";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"practice" | "syllabus" | "custom">("practice");
+  const [activeTab, setActiveTab] = useState<"practice" | "syllabus" | "analytics" | "custom">("practice");
   const [selectedCert, setSelectedCert] = useState<CertType>("CMT");
   const [selectedLevel, setSelectedLevel] = useState<CertLevel>("Level 1");
+
+  // Load student information from local storage for lead generation gatekeeping
+  const [studentInfo, setStudentInfo] = useState<{ name: string; email: string; phone: string } | null>(() => {
+    const saved = localStorage.getItem("finance_prep_student_info");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Failed to parse student info", e);
+      }
+    }
+    return null;
+  });
 
   // Load questions from local storage cache, or fall back to static high-fidelity defaults
   const [questions, setQuestions] = useState<Question[]>(() => {
@@ -84,17 +99,51 @@ export default function App() {
     });
   };
 
-  // Handler to log scoring event
-  const handleAddScore = (isCorrect: boolean) => {
+  // Handler to log scoring event with detailed log histories for diagnostic analytics
+  const handleAddScore = (isCorrect: boolean, question: Question, selectedIndex: number) => {
     setScore((prev) => ({
       correct: prev.correct + (isCorrect ? 1 : 0),
       total: prev.total + 1,
     }));
+
+    try {
+      const savedLogs = localStorage.getItem("finance_prep_attempts_log");
+      let logs = [];
+      if (savedLogs) {
+        logs = JSON.parse(savedLogs);
+      }
+      const newAttempt = {
+        questionId: question.id,
+        questionText: question.text,
+        cert: question.cert,
+        level: question.level,
+        category: question.category,
+        selectedIndex,
+        correctIndex: question.correctAnswerIndex,
+        isCorrect,
+        timestamp: Date.now(),
+      };
+      logs.unshift(newAttempt);
+      localStorage.setItem("finance_prep_attempts_log", JSON.stringify(logs));
+    } catch (e) {
+      console.error("Failed to save attempt log", e);
+    }
   };
 
   const handleResetScore = () => {
     setScore({ correct: 0, total: 0 });
   };
+
+  if (!studentInfo) {
+    return (
+      <LeadGate
+        onUnlock={(info) => {
+          setStudentInfo(info);
+          localStorage.setItem("finance_prep_student_info", JSON.stringify(info));
+        }}
+      />
+    );
+  }
 
   const currentContextQuestions = questions.filter(
     (q) => q.cert === selectedCert && q.level === selectedLevel
@@ -131,8 +180,12 @@ export default function App() {
           <SyllabusViewer cert={selectedCert} level={selectedLevel} />
         )}
 
+        {activeTab === "analytics" && (
+          <AnalyticsDashboard />
+        )}
+
         {activeTab === "custom" && (
-          <CustomQuestionForm
+          <AdminPanel
             currentCert={selectedCert}
             currentLevel={selectedLevel}
             onAddQuestion={handleAddSingleQuestion}

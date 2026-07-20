@@ -1,10 +1,10 @@
-import { BookOpen, HelpCircle, PlusCircle, Award, CheckCircle2 } from "lucide-react";
+import { BookOpen, HelpCircle, PlusCircle, Award, CheckCircle2, BarChart3 } from "lucide-react";
 import { CertType, CertLevel } from "../types";
 import Logo from "./Logo";
 
 interface NavbarProps {
-  activeTab: "practice" | "syllabus" | "custom";
-  setActiveTab: (tab: "practice" | "syllabus" | "custom") => void;
+  activeTab: "practice" | "syllabus" | "analytics" | "custom";
+  setActiveTab: (tab: "practice" | "syllabus" | "analytics" | "custom") => void;
   selectedCert: CertType;
   setSelectedCert: (cert: CertType) => void;
   selectedLevel: CertLevel;
@@ -118,6 +118,19 @@ export default function Navbar({
           </button>
 
           <button
+            id="tab-analytics"
+            onClick={() => setActiveTab("analytics")}
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+              activeTab === "analytics"
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-500" />
+            Performance Analytics
+          </button>
+
+          <button
             id="tab-custom"
             onClick={() => setActiveTab("custom")}
             className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
@@ -126,8 +139,8 @@ export default function Navbar({
                 : "border-transparent text-slate-500 hover:text-slate-800"
             }`}
           >
-            <PlusCircle className="w-4 h-4" />
-            Add Custom MCQ
+            <PlusCircle className="w-4 h-4 text-amber-500" />
+            Add Custom MCQ (Admin)
           </button>
         </nav>
 

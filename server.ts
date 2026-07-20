@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -8,6 +9,185 @@ const PORT = 3000;
 
 // JSON parsing middleware
 app.use(express.json());
+
+// Persistent Local File Paths
+const STUDENTS_FILE = path.join(process.cwd(), "students.json");
+const ADMIN_FILE = path.join(process.cwd(), "admin_config.json");
+
+// Default Fallbacks
+const DEFAULT_ADMIN = {
+  email: "pfainstitute0@gmail.com",
+  password: "admin"
+};
+const DEFAULT_STUDENTS: any[] = [];
+
+// Helper to safely load JSON
+function loadJson(filePath: string, defaultData: any) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error(`Error reading file ${filePath}:`, err);
+  }
+  // Initialize file with default contents if missing
+  fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2), "utf-8");
+  return defaultData;
+}
+
+// Helper to safely save JSON
+function saveJson(filePath: string, data: any) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    return true;
+  } catch (err) {
+    console.error(`Error writing file ${filePath}:`, err);
+    return false;
+  }
+}
+
+// Self-Initialize Files
+loadJson(ADMIN_FILE, DEFAULT_ADMIN);
+loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+
+// 1. Student Lead registration
+app.post("/api/register-student", (req, res) => {
+  try {
+    const { name, email, phone } = req.body;
+    if (!name || !email || !phone) {
+      return res.status(400).json({ error: "Name, email, and phone number are required." });
+    }
+
+    const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    
+    // Check if email already registered
+    const exists = students.some((s: any) => s.email.toLowerCase() === email.toLowerCase());
+    if (exists) {
+      return res.json({ success: true, message: "Student already registered.", alreadyExists: true });
+    }
+
+    const newStudent = {
+      id: `student-${Date.now()}`,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      registeredAt: new Date().toISOString()
+    };
+
+    students.push(newStudent);
+    saveJson(STUDENTS_FILE, students);
+
+    // Forward to Google Sheets Web App if configured
+    const sheetsUrl = process.env.GOOGLE_SHEETS_WEB_APP_URL || process.env.VITE_GOOGLE_SHEETS_WEB_APP_URL;
+    if (sheetsUrl) {
+      fetch(sheetsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newStudent)
+      }).catch((err: any) => {
+        console.error("Failed to forward lead to Google Sheets:", err);
+      });
+    }
+
+    res.json({ success: true, message: "Registration successful!", student: newStudent });
+  } catch (err: any) {
+    console.error("Error registering student:", err);
+    res.status(500).json({ error: "Failed to process registration." });
+  }
+});
+
+// 2. Admin Validation & Session Tokens
+app.post("/api/admin/login", (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required." });
+    }
+
+    const adminConfig = loadJson(ADMIN_FILE, DEFAULT_ADMIN);
+
+    if (
+      email.trim().toLowerCase() === adminConfig.email.toLowerCase() &&
+      password === adminConfig.password
+    ) {
+      const sessionToken = `token-admin-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      return res.json({ success: true, token: sessionToken, message: "Welcome Admin!" });
+    }
+
+    res.status(401).json({ error: "Invalid admin email or password." });
+  } catch (err) {
+    console.error("Error admin login:", err);
+    res.status(500).json({ error: "Authentication system error." });
+  }
+});
+
+// 3. Reset Admin Email and Password
+app.post("/api/admin/reset", (req, res) => {
+  try {
+    const { token, newEmail, newPassword } = req.body;
+    if (!token || !token.startsWith("token-admin")) {
+      return res.status(401).json({ error: "Unauthorized session." });
+    }
+    if (!newEmail || !newPassword) {
+      return res.status(400).json({ error: "New Gmail ID and password are required." });
+    }
+
+    const adminConfig = loadJson(ADMIN_FILE, DEFAULT_ADMIN);
+    adminConfig.email = newEmail.trim().toLowerCase();
+    adminConfig.password = newPassword.trim();
+
+    saveJson(ADMIN_FILE, adminConfig);
+    res.json({ success: true, message: "Admin credentials successfully updated!" });
+  } catch (err) {
+    console.error("Error resetting admin config:", err);
+    res.status(500).json({ error: "Failed to update admin credentials." });
+  }
+});
+
+// 4. Retrieve Registered Students (Admin Only)
+app.get("/api/registered-students", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer token-admin")) {
+      return res.status(401).json({ error: "Unauthorized access to student leads." });
+    }
+
+    const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    res.json({ success: true, students });
+  } catch (err) {
+    console.error("Error retrieving students:", err);
+    res.status(500).json({ error: "Failed to retrieve student roster." });
+  }
+});
+
+// 5. Download Leads as Excel-compatible CSV Report
+app.get("/api/download-leads-csv", (req, res) => {
+  try {
+    const token = req.query.token as string;
+    if (!token || !token.startsWith("token-admin")) {
+      return res.status(401).send("Unauthorized Access. Admin credentials are required.");
+    }
+
+    const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+
+    // CSV formulation
+    let csvContent = "\uFEFFID,Name,Email,Phone Number,Registration Date\n"; // Added BOM for Excel UTF-8 compliance
+    students.forEach((s: any) => {
+      const escapedName = `"${s.name.replace(/"/g, '""')}"`;
+      const escapedEmail = `"${s.email.replace(/"/g, '""')}"`;
+      const escapedPhone = `"${s.phone.replace(/"/g, '""')}"`;
+      csvContent += `${s.id},${escapedName},${escapedEmail},${escapedPhone},${s.registeredAt}\n`;
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=registered_students.csv");
+    res.status(200).send(csvContent);
+  } catch (err) {
+    console.error("Error generating CSV download:", err);
+    res.status(500).send("Error generating lead report.");
+  }
+});
 
 let aiInstance: GoogleGenAI | null = null;
 
