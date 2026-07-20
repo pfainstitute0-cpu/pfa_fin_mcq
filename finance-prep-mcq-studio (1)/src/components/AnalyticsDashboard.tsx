@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { 
   Award, TrendingUp, HelpCircle, CheckCircle2, XCircle, 
-  RotateCcw, ShieldAlert, Sparkles, BookOpen, Clock, Calendar, ChevronDown, ChevronUp 
+  RotateCcw, ShieldAlert, Sparkles, BookOpen, Clock, Calendar, ChevronDown, ChevronUp, Users, Loader2 
 } from "lucide-react";
 import { CertType, CertLevel, Question } from "../types";
 
-interface AttemptLog {
+export interface AttemptLog {
+  id?: string;
   questionId: string;
   questionText: string;
   cert: CertType;
@@ -15,14 +16,64 @@ interface AttemptLog {
   correctIndex: number;
   isCorrect: boolean;
   timestamp: number;
+  studentEmail?: string;
+  studentName?: string;
 }
 
-export default function AnalyticsDashboard() {
+interface AnalyticsDashboardProps {
+  isAdmin?: boolean;
+  adminToken?: string | null;
+}
+
+export default function AnalyticsDashboard({ isAdmin = false, adminToken = null }: AnalyticsDashboardProps) {
   const [attempts, setAttempts] = useState<AttemptLog[]>([]);
+  const [allServerAttempts, setAllServerAttempts] = useState<AttemptLog[]>([]);
+  const [students, setStudents] = useState<{ id: string; name: string; email: string; phone: string; registeredAt: string }[]>([]);
+  const [selectedStudentEmail, setSelectedStudentEmail] = useState<string>("ALL_STUDENTS");
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
   const [certFilter, setCertFilter] = useState<"ALL" | CertType>("ALL");
 
   useEffect(() => {
+    if (isAdmin && adminToken) {
+      setLoading(true);
+      setErrorMsg(null);
+      
+      const fetchStudents = fetch("/api/registered-students", {
+        headers: { "Authorization": `Bearer ${adminToken}` }
+      }).then(res => {
+        if (!res.ok) throw new Error("Failed to load student list");
+        return res.json();
+      });
+
+      const fetchAttempts = fetch("/api/admin/student-attempts", {
+        headers: { "Authorization": `Bearer ${adminToken}` }
+      }).then(res => {
+        if (!res.ok) throw new Error("Failed to load attempts logs");
+        return res.json();
+      });
+
+      Promise.all([fetchStudents, fetchAttempts])
+        .then(([studentsData, attemptsData]) => {
+          setStudents(studentsData.students || []);
+          setAllServerAttempts(attemptsData.attempts || []);
+        })
+        .catch(err => {
+          console.error("Admin fetch analytics data error:", err);
+          setErrorMsg("Could not load full analytics from server. Showing offline local data.");
+          loadLocalLogs();
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      loadLocalLogs();
+    }
+  }, [isAdmin, adminToken]);
+
+  const loadLocalLogs = () => {
     const saved = localStorage.getItem("finance_prep_attempts_log");
     if (saved) {
       try {
@@ -31,7 +82,7 @@ export default function AnalyticsDashboard() {
         console.error("Failed to parse attempts log", e);
       }
     }
-  }, []);
+  };
 
   const handleClearStats = () => {
     if (window.confirm("Are you sure you want to clear your local performance metrics history? This action is irreversible.")) {
@@ -43,8 +94,16 @@ export default function AnalyticsDashboard() {
     }
   };
 
+  // Determine active attempts pool
+  const activeAttemptsPool = isAdmin 
+    ? (selectedStudentEmail === "ALL_STUDENTS" 
+        ? allServerAttempts 
+        : allServerAttempts.filter(att => att.studentEmail?.toLowerCase() === selectedStudentEmail.toLowerCase())
+      )
+    : attempts;
+
   // Filter attempts based on certificate selection
-  const filteredAttempts = attempts.filter(
+  const filteredAttempts = activeAttemptsPool.filter(
     (att) => certFilter === "ALL" || att.cert === certFilter
   );
 
@@ -56,7 +115,7 @@ export default function AnalyticsDashboard() {
 
   // Breakdown by Certification
   const certStats = ["CMT", "CFA", "CFP", "FRM"].map((c) => {
-    const certAttempts = attempts.filter((att) => att.cert === c);
+    const certAttempts = activeAttemptsPool.filter((att) => att.cert === c);
     const certTotal = certAttempts.length;
     const certCorrect = certAttempts.filter((att) => att.isCorrect).length;
     const certAccuracy = certTotal > 0 ? Math.round((certCorrect / certTotal) * 100) : 0;
@@ -109,7 +168,7 @@ export default function AnalyticsDashboard() {
             </p>
           </div>
 
-          {totalAttempted > 0 && (
+          {totalAttempted > 0 && !isAdmin && (
             <button
               onClick={handleClearStats}
               className="px-4 py-2 bg-rose-900/20 hover:bg-rose-900/40 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-bold transition-all cursor-pointer w-fit"
@@ -120,7 +179,75 @@ export default function AnalyticsDashboard() {
         </div>
       </div>
 
-      {attempts.length === 0 ? (
+      {errorMsg && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium">
+          ⚠️ {errorMsg}
+        </div>
+      )}
+
+      {/* Admin Student Selector Controls */}
+      {isAdmin && (
+        <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm space-y-4" id="admin-analytics-selector">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">Student-Wise Assessment Insights</h3>
+                <p className="text-[10px] text-slate-500 font-medium">Analyze individual student logs and target certification study weaknesses.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <label htmlFor="admin-student-select" className="text-xs font-bold text-slate-700 font-sans whitespace-nowrap">Focus Student:</label>
+              <select
+                id="admin-student-select"
+                value={selectedStudentEmail}
+                onChange={(e) => {
+                  setSelectedStudentEmail(e.target.value);
+                  setExpandedAttemptId(null);
+                }}
+                className="bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 font-sans cursor-pointer min-w-[220px]"
+              >
+                <option value="ALL_STUDENTS">👥 All Registered Students ({allServerAttempts.length} logs)</option>
+                {students.map((st) => {
+                  const studentLogsCount = allServerAttempts.filter(l => l.studentEmail?.toLowerCase() === st.email.toLowerCase()).length;
+                  return (
+                    <option key={st.id} value={st.email}>
+                      👤 {st.name} ({studentLogsCount} questions)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+
+          {selectedStudentEmail !== "ALL_STUDENTS" && (
+            <div className="bg-white/80 rounded-xl p-3 border border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs font-medium text-slate-600">
+              {(() => {
+                const s = students.find(student => student.email.toLowerCase() === selectedStudentEmail.toLowerCase());
+                if (!s) return null;
+                return (
+                  <>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Full Name</span><span className="text-slate-800 font-bold">{s.name}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Email Address</span><span className="text-slate-800 select-all">{s.email}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Phone / WhatsApp</span><span className="text-slate-800 font-mono">{s.phone}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Registered On</span><span className="text-slate-800">{new Date(s.registeredAt).toLocaleDateString()} at {new Date(s.registeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 space-y-3" id="analytics-loader">
+          <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">Retrieving dynamic assessment data...</p>
+        </div>
+      ) : activeAttemptsPool.length === 0 ? (
         /* Empty State */
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-xl mx-auto space-y-4" id="analytics-empty">
           <div className="inline-flex p-4 bg-blue-50 text-blue-600 rounded-2xl">
@@ -128,7 +255,10 @@ export default function AnalyticsDashboard() {
           </div>
           <h3 className="font-display font-extrabold text-slate-900 text-lg">No Practice Sessions Found</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-            Your performance diagnostics are empty. Jump back into the <strong>Practice Arena</strong> and answer multiple-choice questions to build your active learning analytical report!
+            {isAdmin 
+              ? "The selected student has not answered any multiple-choice practice questions in the arena yet." 
+              : "Your performance diagnostics are empty. Jump back into the Practice Arena and answer multiple-choice questions to build your active learning analytical report!"
+            }
           </p>
         </div>
       ) : (
@@ -364,6 +494,11 @@ export default function AnalyticsDashboard() {
                             {att.questionText}
                           </p>
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            {isAdmin && selectedStudentEmail === "ALL_STUDENTS" && att.studentName && (
+                              <span className="text-[9px] font-bold text-slate-700 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-sm">
+                                👤 {att.studentName}
+                              </span>
+                            )}
                             <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-sm">
                               {att.cert} • {att.level}
                             </span>

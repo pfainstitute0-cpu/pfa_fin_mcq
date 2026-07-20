@@ -173,6 +173,21 @@ export default function App() {
       };
       logs.unshift(newAttempt);
       localStorage.setItem("finance_prep_attempts_log", JSON.stringify(logs));
+
+      // Sync attempt to the backend server in real-time
+      if (studentInfo) {
+        fetch("/api/submit-attempt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            studentEmail: studentInfo.email,
+            studentName: studentInfo.name,
+            attempt: newAttempt
+          })
+        }).catch((err) => {
+          console.warn("Backend attempt sync failed:", err);
+        });
+      }
     } catch (e) {
       console.error("Failed to save attempt log", e);
     }
@@ -230,7 +245,7 @@ export default function App() {
         )}
 
         {activeTab === "analytics" && (
-          <AnalyticsDashboard />
+          <AnalyticsDashboard isAdmin={isAdmin} adminToken={adminToken} />
         )}
 
         {activeTab === "custom" && (
