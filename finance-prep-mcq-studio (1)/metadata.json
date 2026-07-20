@@ -1,0 +1,6 @@
+{
+  "name": "Finance Prep MCQ Studio",
+  "description": "An interactive exam prep application for CMT, CFA, and CFP certifications featuring dynamic MCQ generation and syllabus updates powered by Google Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
