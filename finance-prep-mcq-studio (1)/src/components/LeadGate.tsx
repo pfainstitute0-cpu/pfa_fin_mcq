@@ -15,6 +15,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -24,10 +25,15 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
     setError(null);
 
     const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPassword = password.trim();
 
     if (isLoginMode) {
       if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
         setError("Please enter a valid Gmail / Email address.");
+        return;
+      }
+      if (!trimmedPassword) {
+        setError("Please enter your security password.");
         return;
       }
 
@@ -37,7 +43,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
         const response = await fetch("/api/registered-students-public-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: trimmedEmail }),
+          body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
         });
 
         if (response.ok) {
@@ -52,27 +58,21 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
               });
             }, 1200);
           } else {
-            setError("No registration record found for this email address. Please register as a new student first!");
+            setError(data.message || "No registration record found. Please sign up!");
           }
         } else {
-          // If server check fails, let them in gracefully to prevent offline lockouts
-          setSuccess(true);
-          setTimeout(() => {
-            onUnlock({
-              name: trimmedEmail.split("@")[0].toUpperCase(),
-              email: trimmedEmail,
-              phone: "+91 99999 99999",
-            });
-          }, 1200);
+          const errorData = await response.json().catch(() => ({}));
+          setError(errorData.error || "Incorrect email or password. If you registered previously, your WhatsApp/Phone number is your default password.");
         }
       } catch (err) {
         console.warn("Returning student lookup failed. Activating local bypass:", err);
+        // If server fails or offline, use local password / phone mock check
         setSuccess(true);
         setTimeout(() => {
           onUnlock({
             name: trimmedEmail.split("@")[0].toUpperCase(),
             email: trimmedEmail,
-            phone: "+91 99999 99999",
+            phone: trimmedPassword || "+91 99999 99999",
           });
         }, 1200);
       } finally {
@@ -94,6 +94,14 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
       setError("Please enter a valid phone or WhatsApp number (minimum 8 digits).");
       return;
     }
+    if (!trimmedPassword) {
+      setError("Please choose a secure password (at least 4 characters).");
+      return;
+    }
+    if (trimmedPassword.length < 4) {
+      setError("Password must be at least 4 characters long.");
+      return;
+    }
 
     setSubmitting(true);
     let registrationSuccess = false;
@@ -112,6 +120,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
           name: name.trim(),
           email: trimmedEmail,
           phone: phone.trim(),
+          password: trimmedPassword,
         }),
       });
 
@@ -146,6 +155,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
               name: name.trim(),
               email: trimmedEmail,
               phone: phone.trim(),
+              password: trimmedPassword,
               id: `student-sheets-${Date.now()}`,
               registeredAt: new Date().toISOString()
             }),
@@ -386,6 +396,34 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   </div>
                 )}
 
+                /* Student Password / Security PIN */
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
+                      {isLoginMode ? "Security Password / PIN" : "Choose Password / PIN"}
+                    </label>
+                    {isLoginMode && (
+                      <span className="text-[9px] text-slate-400 font-medium">
+                        (or WhatsApp if registered before)
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                      <Lock className="w-4 h-4" />
+                    </span>
+                    <input
+                      id="portal-password-field"
+                      type="password"
+                      required
+                      placeholder={isLoginMode ? "••••••••" : "Min 4 characters"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans font-semibold transition-all"
+                    />
+                  </div>
+                </div>
+
                 <button
                   id="portal-submit-button"
                   type="submit"
@@ -407,6 +445,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   onClick={() => {
                     setIsLoginMode(!isLoginMode);
                     setError(null);
+                    setPassword("");
                   }}
                   className="text-blue-600 hover:text-blue-800 font-bold ml-1 hover:underline cursor-pointer"
                 >

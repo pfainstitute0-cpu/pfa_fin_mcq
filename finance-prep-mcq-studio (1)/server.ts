@@ -57,7 +57,7 @@ loadJson(ATTEMPTS_FILE, DEFAULT_ATTEMPTS);
 // 1. Student Lead registration
 app.post("/api/register-student", (req, res) => {
   try {
-    const { name, email, phone } = req.body;
+    const { name, email, phone, password } = req.body;
     if (!name || !email || !phone) {
       return res.status(400).json({ error: "Name, email, and phone number are required." });
     }
@@ -78,6 +78,7 @@ app.post("/api/register-student", (req, res) => {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       phone: phone.trim(),
+      password: (password || phone || "").trim(), // Use phone as fallback password if not provided
       registeredAt: new Date().toISOString()
     };
 
@@ -114,6 +115,7 @@ app.post("/api/register-student", (req, res) => {
         name: (req.body.name || "Student").trim(),
         email: (req.body.email || "emergency@gmail.com").trim().toLowerCase(),
         phone: (req.body.phone || "").trim(),
+        password: (req.body.password || req.body.phone || "").trim(),
         registeredAt: new Date().toISOString()
       }
     });
@@ -237,9 +239,12 @@ app.post("/api/admin/reset", (req, res) => {
 // 3.5 Public Student Verification for Returning Login
 app.post("/api/registered-students-public-check", (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, password } = req.body;
     if (!email) {
       return res.status(400).json({ error: "Email is required." });
+    }
+    if (!password) {
+      return res.status(400).json({ error: "Password is required." });
     }
 
     const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
@@ -248,9 +253,17 @@ app.post("/api/registered-students-public-check", (req, res) => {
     );
 
     if (student) {
-      res.json({ success: true, student: { name: student.name, email: student.email, phone: student.phone } });
+      // Determine student password; default to phone number if password field is missing
+      const studentPassword = (student.password || student.phone || "").trim().toLowerCase();
+      const inputPassword = password.trim().toLowerCase();
+
+      if (studentPassword === inputPassword) {
+        res.json({ success: true, student: { name: student.name, email: student.email, phone: student.phone } });
+      } else {
+        res.status(401).json({ error: "Incorrect password. If you registered previously, your WhatsApp/Phone number is your default password." });
+      }
     } else {
-      res.json({ success: false, message: "No student found." });
+      res.status(404).json({ error: "No registration record found for this email address. Please register as a new student first!" });
     }
   } catch (err) {
     console.error("Error looking up student:", err);

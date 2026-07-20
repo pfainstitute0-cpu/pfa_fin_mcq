@@ -198,10 +198,8 @@ export default function App() {
   };
 
   const handleStudentLogout = () => {
-    if (window.confirm("Are you sure you want to sign out? This will return you to the student registration page, but your local practice progress will remain saved.")) {
-      setStudentInfo(null);
-      localStorage.removeItem("finance_prep_student_info");
-    }
+    setStudentInfo(null);
+    localStorage.removeItem("finance_prep_student_info");
   };
 
   if (!studentInfo) {

@@ -28,27 +28,58 @@ export default function AdminLoginModal({
     setAuthError(null);
     setLoggingIn(true);
 
+    const inputEmail = email.trim().toLowerCase();
+    const inputPassword = password.trim();
+
+    // Default local configurations for static deployments (e.g. Vercel)
+    const fallbackEmail = "pfainstitute0@gmail.com";
+    const fallbackPassword = localStorage.getItem("finance_prep_admin_local_pwd") || "admin";
+
     try {
       const response = await fetch("/api/admin/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: inputEmail, password: inputPassword }),
       });
 
-      if (!response.ok) {
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.token) {
+          onLoginSuccess(data.token, inputEmail);
+          setEmail("");
+          setPassword("");
+          onClose();
+          return;
+        }
+      }
+
+      // Check if it's a 404 or server failure (common in static environments like Vercel)
+      if (response.status === 404 || response.status >= 500) {
+        if (inputEmail === fallbackEmail && inputPassword === fallbackPassword) {
+          const localToken = `token-admin-local-${Date.now()}`;
+          onLoginSuccess(localToken, inputEmail);
+          setEmail("");
+          setPassword("");
+          onClose();
+          return;
+        } else {
+          throw new Error("Invalid admin email or password.");
+        }
+      } else {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || "Invalid admin email or password.");
       }
-
-      const data = await response.json();
-      if (data.success && data.token) {
-        onLoginSuccess(data.token, email.trim());
+    } catch (err: any) {
+      // If we got a network error or bypass trigger (e.g. static Vercel with no server)
+      if (inputEmail === fallbackEmail && inputPassword === fallbackPassword) {
+        const localToken = `token-admin-local-${Date.now()}`;
+        onLoginSuccess(localToken, inputEmail);
         setEmail("");
         setPassword("");
         onClose();
+      } else {
+        setAuthError(err.message || "Invalid admin credentials.");
       }
-    } catch (err: any) {
-      setAuthError(err.message || "Network credentials verification failed.");
     } finally {
       setLoggingIn(false);
     }
@@ -59,7 +90,10 @@ export default function AdminLoginModal({
     setAuthError(null);
     setSuccessMsg(null);
 
-    if (!email.trim()) {
+    const inputEmail = email.trim().toLowerCase();
+    const targetEmail = "pfainstitute0@gmail.com";
+
+    if (!inputEmail) {
       setAuthError("Please enter your registered admin Gmail address.");
       return;
     }
@@ -78,30 +112,62 @@ export default function AdminLoginModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: email.trim(),
+          email: inputEmail,
           newPassword: newPassword.trim(),
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Email verification failed.");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          localStorage.setItem("finance_prep_admin_local_pwd", newPassword.trim());
+          setSuccessMsg(data.message || "Master password successfully reset!");
+          setNewPassword("");
+          setConfirmPassword("");
+          setTimeout(() => {
+            setIsResetMode(false);
+            setSuccessMsg(null);
+            setAuthError(null);
+          }, 3000);
+          return;
+        }
       }
 
-      const data = await response.json();
-      if (data.success) {
-        setSuccessMsg(data.message || "Master password successfully reset!");
+      // If the API endpoint is missing (404) or fails on a static server:
+      if (response.status === 404 || response.status >= 500) {
+        if (inputEmail === targetEmail) {
+          localStorage.setItem("finance_prep_admin_local_pwd", newPassword.trim());
+          setSuccessMsg("Master password successfully reset locally (static deployment)!");
+          setNewPassword("");
+          setConfirmPassword("");
+          setTimeout(() => {
+            setIsResetMode(false);
+            setSuccessMsg(null);
+            setAuthError(null);
+          }, 3000);
+          return;
+        } else {
+          throw new Error("Admin email verification failed.");
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Reset verification failed.");
+      }
+    } catch (err: any) {
+      // Network/Bypass fallback
+      if (inputEmail === targetEmail) {
+        localStorage.setItem("finance_prep_admin_local_pwd", newPassword.trim());
+        setSuccessMsg("Master password successfully reset locally (offline bypass)!");
         setNewPassword("");
         setConfirmPassword("");
-        // Automatically switch back to login mode after a brief timeout
         setTimeout(() => {
           setIsResetMode(false);
           setSuccessMsg(null);
           setAuthError(null);
         }, 3000);
+      } else {
+        setAuthError(err.message || "Failed to reset password.");
       }
-    } catch (err: any) {
-      setAuthError(err.message || "Failed to reset password.");
     } finally {
       setLoggingIn(false);
     }
@@ -201,10 +267,6 @@ export default function AdminLoginModal({
               >
                 Forgot Password?
               </button>
-              
-              <span className="text-[10px] text-slate-400 font-mono">
-                Default credentials active
-              </span>
             </div>
 
             <button
@@ -215,15 +277,6 @@ export default function AdminLoginModal({
             >
               {loggingIn ? "Verifying..." : "Sign In to Admin Panel"}
             </button>
-
-            {/* Default credential helper banner */}
-            <div className="p-3 bg-amber-50 border border-amber-100/60 rounded-xl text-[10px] text-amber-800 leading-relaxed font-sans">
-              ⚙️ <strong>First-Time Access:</strong> Use the default initial credentials below:
-              <div className="mt-1 font-mono text-[9px] flex justify-between">
-                <span>Email: <strong className="select-all">pfainstitute0@gmail.com</strong></span>
-                <span>Pass: <strong className="select-all">admin</strong></span>
-              </div>
-            </div>
           </form>
         ) : (
           /* RESET PASSWORD FORM */
