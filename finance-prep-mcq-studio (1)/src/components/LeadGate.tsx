@@ -12,174 +12,221 @@ interface LeadGateProps {
 
 export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
   const [isLoginMode, setIsLoginMode] = useState(false);
+  const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
+  const [verificationStep, setVerificationStep] = useState<'form' | 'otp'>('form');
+  const [sentOtpType, setSentOtpType] = useState<'register' | 'forgot-password' | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [devOtpAlert, setDevOtpAlert] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Send verification OTP code via nodemailer/SMTP (or dev fallback)
+  const handleSendOtp = async (type: 'register' | 'forgot-password') => {
+    setError(null);
+    setDevOtpAlert(null);
+    const targetEmail = email.trim().toLowerCase();
+
+    if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+      setError("Please enter a valid Gmail / Email address.");
+      return;
+    }
+
+    if (type === 'register') {
+      if (!name.trim()) {
+        setError("Please enter your full name.");
+        return;
+      }
+      if (!phone.trim() || phone.replace(/\D/g, "").length < 8) {
+        setError("Please enter a valid phone or WhatsApp number (minimum 8 digits).");
+        return;
+      }
+      if (!password.trim()) {
+        setError("Please choose a secure password (at least 4 characters).");
+        return;
+      }
+      if (password.trim().length < 4) {
+        setError("Password must be at least 4 characters long.");
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/otp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: targetEmail, type }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSentOtpType(type);
+        setVerificationStep('otp');
+        if (data.devOtp) {
+          setDevOtpAlert(data.devOtp);
+        }
+      } else {
+        setError(data.error || "Failed to send verification code. Please check your email and try again.");
+      }
+    } catch (err) {
+      console.error("Failed to trigger OTP delivery:", err);
+      setError("Network connection issue. Failed to request security code from the server.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Submit returning user login directly
+  const handleSubmitLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPassword = password.trim();
 
-    if (isLoginMode) {
-      if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-        setError("Please enter a valid Gmail / Email address.");
-        return;
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError("Please enter a valid Gmail / Email address.");
+      return;
+    }
+    if (!trimmedPassword) {
+      setError("Please enter your security password.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/registered-students-public-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.student) {
+          setSuccess(true);
+          setTimeout(() => {
+            onUnlock({
+              name: data.student.name,
+              email: data.student.email,
+              phone: data.student.phone,
+            });
+          }, 1200);
+        } else {
+          setError(data.message || "Incorrect credentials or unregistered student email.");
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.error || "Incorrect password. If you registered previously, your WhatsApp/Phone number is your default password.");
       }
-      if (!trimmedPassword) {
-        setError("Please enter your security password.");
+    } catch (err) {
+      console.warn("Returning student lookup failed. Activating local bypass:", err);
+      setSuccess(true);
+      setTimeout(() => {
+        onUnlock({
+          name: trimmedEmail.split("@")[0].toUpperCase(),
+          email: trimmedEmail,
+          phone: trimmedPassword || "+91 99999 99999",
+        });
+      }, 1200);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Submit direct entry for register or forgot-password OTP verification
+  const handleVerifyOtpAndAction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!otpCode.trim() || otpCode.trim().length < 6) {
+      setError("Please enter the complete 6-digit verification code (OTP).");
+      return;
+    }
+
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (sentOtpType === 'register') {
+      setSubmitting(true);
+      try {
+        const response = await fetch("/api/register-student", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            email: trimmedEmail,
+            phone: phone.trim(),
+            password: password.trim(),
+            otp: otpCode.trim()
+          }),
+        });
+
+        const data = await response.json();
+        if (response.ok && data.success) {
+          setSuccess(true);
+          setDevOtpAlert(null);
+          setTimeout(() => {
+            onUnlock({
+              name: data.student.name,
+              email: data.student.email,
+              phone: data.student.phone,
+            });
+          }, 1200);
+        } else {
+          setError(data.error || "Incorrect or expired verification code (OTP).");
+        }
+      } catch (err) {
+        console.error("OTP registration validation failed:", err);
+        setError("Network response issue. Failed to register.");
+      } finally {
+        setSubmitting(false);
+      }
+    } else if (sentOtpType === 'forgot-password') {
+      const targetPass = newPassword.trim();
+      if (!targetPass || targetPass.length < 4) {
+        setError("Please choose a secure new password (at least 4 characters).");
         return;
       }
 
       setSubmitting(true);
       try {
-        // Query server to check if this student exists
-        const response = await fetch("/api/registered-students-public-check", {
+        const response = await fetch("/api/student/reset-password-with-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: trimmedEmail, password: trimmedPassword }),
+          body: JSON.stringify({
+            email: trimmedEmail,
+            otp: otpCode.trim(),
+            newPassword: targetPass
+          }),
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.student) {
-            setSuccess(true);
-            setTimeout(() => {
-              onUnlock({
-                name: data.student.name,
-                email: data.student.email,
-                phone: data.student.phone,
-              });
-            }, 1200);
-          } else {
-            setError(data.message || "No registration record found. Please sign up!");
-          }
-        } else {
-          const errorData = await response.json().catch(() => ({}));
-          setError(errorData.error || "Incorrect email or password. If you registered previously, your WhatsApp/Phone number is your default password.");
-        }
-      } catch (err) {
-        console.warn("Returning student lookup failed. Activating local bypass:", err);
-        // If server fails or offline, use local password / phone mock check
-        setSuccess(true);
-        setTimeout(() => {
-          onUnlock({
-            name: trimmedEmail.split("@")[0].toUpperCase(),
-            email: trimmedEmail,
-            phone: trimmedPassword || "+91 99999 99999",
-          });
-        }, 1200);
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
-    // New Registration Validation
-    if (!name.trim()) {
-      setError("Please enter your full name.");
-      return;
-    }
-    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-    if (!phone.trim() || phone.replace(/\D/g, "").length < 8) {
-      setError("Please enter a valid phone or WhatsApp number (minimum 8 digits).");
-      return;
-    }
-    if (!trimmedPassword) {
-      setError("Please choose a secure password (at least 4 characters).");
-      return;
-    }
-    if (trimmedPassword.length < 4) {
-      setError("Password must be at least 4 characters long.");
-      return;
-    }
-
-    setSubmitting(true);
-    let registrationSuccess = false;
-    let registeredStudent = {
-      name: name.trim(),
-      email: trimmedEmail,
-      phone: phone.trim(),
-    };
-
-    try {
-      // Try backend first
-      const response = await fetch("/api/register-student", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          email: trimmedEmail,
-          phone: phone.trim(),
-          password: trimmedPassword,
-        }),
-      });
-
-      if (response.ok) {
         const data = await response.json();
-        if (data.success) {
-          registrationSuccess = true;
-          if (data.student) {
-            registeredStudent = {
+        if (response.ok && data.success) {
+          setSuccess(true);
+          setDevOtpAlert(null);
+          setTimeout(() => {
+            onUnlock({
               name: data.student.name,
               email: data.student.email,
               phone: data.student.phone,
-            };
-          }
+            });
+          }, 1200);
         } else {
-          throw new Error(data.error || "Server refused registration request.");
+          setError(data.error || "Incorrect or expired password reset code (OTP).");
         }
-      } else {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-    } catch (backendErr: any) {
-      console.warn("Backend registration failed. Checking Sheets bypass...", backendErr);
-      
-      const googleSheetsUrl = (import.meta as any).env.VITE_GOOGLE_SHEETS_WEB_APP_URL;
-      if (googleSheetsUrl) {
-        try {
-          await fetch(googleSheetsUrl, {
-            method: "POST",
-            mode: "no-cors",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: name.trim(),
-              email: trimmedEmail,
-              phone: phone.trim(),
-              password: trimmedPassword,
-              id: `student-sheets-${Date.now()}`,
-              registeredAt: new Date().toISOString()
-            }),
-          });
-          registrationSuccess = true;
-        } catch (sheetErr: any) {
-          console.error("Google Sheets direct submission failed:", sheetErr);
-          setError("Google Sheets integration failed. Please check your App Script deployment URL.");
-          setSubmitting(false);
-          return;
-        }
-      } else {
-        // Fallback for seamless frontend offline demo experience
-        registrationSuccess = true;
+      } catch (err) {
+        console.error("OTP password reset validation failed:", err);
+        setError("Network connection issue. Failed to update password.");
+      } finally {
+        setSubmitting(false);
       }
     }
-
-    if (registrationSuccess) {
-      setSuccess(true);
-      setTimeout(() => {
-        onUnlock(registeredStudent);
-      }, 1200);
-    }
-    setSubmitting(false);
   };
 
   return (
@@ -307,12 +354,24 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 <GraduationCap className="w-6 h-6" />
               </div>
               <h2 className="font-display font-extrabold text-slate-900 text-lg tracking-tight">
-                {isLoginMode ? "Returning Student Login" : "Student Registration Portal"}
+                {verificationStep === 'otp' 
+                  ? (sentOtpType === 'forgot-password' ? "Reset Your Password" : "Verify Your Email")
+                  : (isForgotPasswordMode 
+                    ? "Reset Password Request" 
+                    : (isLoginMode ? "Returning Student Login" : "Student Registration Portal")
+                  )
+                }
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed max-w-[280px] mx-auto">
-                {isLoginMode 
-                  ? "Enter your registered email address to instantly retrieve your active learning dashboard."
-                  : "Register with your name, Gmail, and WhatsApp number to unlock free high-fidelity study tools."
+                {verificationStep === 'otp'
+                  ? `Enter the 6-digit secure code sent to ${email}`
+                  : (isForgotPasswordMode
+                    ? "Enter your registered email address to receive a password reset code."
+                    : (isLoginMode 
+                      ? "Enter your registered email address to instantly retrieve your active learning dashboard."
+                      : "Register with your name, Gmail, and WhatsApp number to unlock free high-fidelity study tools."
+                    )
+                  )
                 }
               </p>
             </div>
@@ -327,8 +386,158 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   Assembling personalized arena...
                 </p>
               </div>
+            ) : verificationStep === 'otp' ? (
+              /* OTP verification state */
+              <form onSubmit={handleVerifyOtpAndAction} className="space-y-4 font-sans" id="portal-otp-form">
+                {error && (
+                  <div className="bg-rose-50 border border-rose-100 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium animate-in slide-in-from-top-1">
+                    ⚠️ {error}
+                  </div>
+                )}
+
+                {devOtpAlert && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-4 py-3.5 rounded-xl font-medium animate-in fade-in">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                      <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                      Developer Demonstration Bypass
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed">
+                      SMTP email is not configured in secrets. Use this code to test verification:
+                    </p>
+                    <div className="mt-2 inline-block bg-white border border-amber-300 rounded-md px-3 py-1 font-mono font-bold text-sm tracking-widest text-amber-900">
+                      {devOtpAlert}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
+                    6-Digit Verification Code (OTP)
+                  </label>
+                  <input
+                    id="portal-otp-field"
+                    type="text"
+                    required
+                    maxLength={6}
+                    placeholder="123456"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-4 py-3 text-center text-lg tracking-widest font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold transition-all"
+                  />
+                </div>
+
+                {sentOtpType === 'forgot-password' && (
+                  <div className="space-y-1 animate-in slide-in-from-top-2 duration-200">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
+                      Choose New Password / PIN
+                    </label>
+                    <input
+                      id="portal-new-password-field"
+                      type="password"
+                      required
+                      placeholder="Min 4 characters"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl px-4 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans font-semibold transition-all"
+                    />
+                  </div>
+                )}
+
+                <button
+                  id="portal-verify-otp-button"
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-100 transition-all mt-6 cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  {submitting ? "Verifying..." : "Verify & Unlock Workspace"}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVerificationStep('form');
+                      setError(null);
+                      setOtpCode("");
+                      setDevOtpAlert(null);
+                    }}
+                    className="text-slate-400 hover:text-slate-600 font-bold text-xs"
+                  >
+                    ← Back to edit credentials
+                  </button>
+                </div>
+              </form>
+            ) : isForgotPasswordMode ? (
+              /* Forgot password state asking for email */
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSendOtp('forgot-password');
+                }} 
+                className="space-y-4 font-sans" 
+                id="portal-forgot-password-form"
+              >
+                {error && (
+                  <div className="bg-rose-50 border border-rose-100 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium animate-in slide-in-from-top-1">
+                    ⚠️ {error}
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">Registered Email Address</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 pointer-events-none">
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      id="portal-forgot-email"
+                      type="email"
+                      required
+                      placeholder="rahul.sharma@gmail.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans font-semibold transition-all"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  id="portal-send-reset-otp-button"
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-100 transition-all mt-4 cursor-pointer"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  {submitting ? "Sending Code..." : "Send Reset Verification Code"}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsForgotPasswordMode(false);
+                      setIsLoginMode(true);
+                      setError(null);
+                    }}
+                    className="text-slate-400 hover:text-slate-600 font-bold text-xs"
+                  >
+                    ← Back to Sign In
+                  </button>
+                </div>
+              </form>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4 font-sans" id="portal-student-form">
+              /* Regular signup / login forms */
+              <form 
+                onSubmit={isLoginMode ? handleSubmitLogin : (e) => {
+                  e.preventDefault();
+                  handleSendOtp('register');
+                }} 
+                className="space-y-4 font-sans" 
+                id="portal-student-form"
+              >
                 {error && (
                   <div className="bg-rose-50 border border-rose-100 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium animate-in slide-in-from-top-1">
                     ⚠️ {error}
@@ -356,7 +565,6 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   </div>
                 )}
 
-                /* Student Email */
                 <div className="space-y-1">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">Gmail / Email Address</label>
                   <div className="relative">
@@ -396,7 +604,6 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   </div>
                 )}
 
-                /* Student Password / Security PIN */
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
@@ -424,6 +631,22 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   </div>
                 </div>
 
+                {isLoginMode && (
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsForgotPasswordMode(true);
+                        setError(null);
+                        setPassword("");
+                      }}
+                      className="text-[11px] text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                    >
+                      Forgot Password?
+                    </button>
+                  </div>
+                )}
+
                 <button
                   id="portal-submit-button"
                   type="submit"
@@ -431,7 +654,10 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                   className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-100 transition-all mt-6 cursor-pointer"
                 >
                   <Lock className="w-3.5 h-3.5" />
-                  {submitting ? "Verifying Record..." : (isLoginMode ? "Unlock My Workspace" : "Unlock Free Study Dashboard")}
+                  {submitting 
+                    ? "Processing..." 
+                    : (isLoginMode ? "Unlock My Workspace" : "Send Registration Verification Code")
+                  }
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </form>
@@ -444,8 +670,13 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 <button
                   onClick={() => {
                     setIsLoginMode(!isLoginMode);
+                    setIsForgotPasswordMode(false);
+                    setVerificationStep('form');
                     setError(null);
                     setPassword("");
+                    setOtpCode("");
+                    setNewPassword("");
+                    setDevOtpAlert(null);
                   }}
                   className="text-blue-600 hover:text-blue-800 font-bold ml-1 hover:underline cursor-pointer"
                 >

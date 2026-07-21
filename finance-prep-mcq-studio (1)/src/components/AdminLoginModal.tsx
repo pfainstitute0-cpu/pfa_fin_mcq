@@ -291,7 +291,7 @@ export default function AdminLoginModal({
                   id="admin-reset-email"
                   type="email"
                   required
-                  placeholder="e.g. pfainstitute0@gmail.com"
+                  placeholder="administrator@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all font-sans font-semibold"

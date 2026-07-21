@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import nodemailer from "nodemailer";
 
 const app = express();
 const PORT = 3000;
@@ -22,6 +23,32 @@ const DEFAULT_ADMIN = {
 };
 const DEFAULT_STUDENTS: any[] = [];
 const DEFAULT_ATTEMPTS: any[] = [];
+
+// OTP In-Memory Storage
+const activeOtps = new Map<string, { otp: string; expiresAt: number; type: "register" | "forgot-password" }>();
+
+// Helper to configure Nodemailer transporter
+function getEmailTransporter() {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || "587", 10);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const secure = process.env.SMTP_SECURE === "true";
+
+  if (!host || !user || !pass) {
+    return null;
+  }
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass,
+    },
+  });
+}
 
 // Helper to safely load JSON
 function loadJson(filePath: string, defaultData: any) {
@@ -54,13 +81,189 @@ loadJson(ADMIN_FILE, DEFAULT_ADMIN);
 loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
 loadJson(ATTEMPTS_FILE, DEFAULT_ATTEMPTS);
 
+// OTP API - Send OTP Code
+app.post("/api/otp/send", async (req, res) => {
+  try {
+    const { email, type } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email address is required." });
+    }
+    if (!type || (type !== "register" && type !== "forgot-password")) {
+      return res.status(400).json({ error: "Invalid registration type." });
+    }
+
+    const emailKey = email.trim().toLowerCase();
+
+    // If type is forgot-password, ensure student exists
+    if (type === "forgot-password") {
+      let students = [];
+      try {
+        students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+      } catch (err) {
+        students = [];
+      }
+      const studentExists = students.some((s: any) => s && s.email && s.email.toLowerCase() === emailKey);
+      if (!studentExists) {
+        return res.status(404).json({ error: "No student account found with this email address. Please register first!" });
+      }
+    }
+
+    // Generate 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Store in-memory for 10 minutes
+    activeOtps.set(emailKey, {
+      otp,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      type
+    });
+
+    console.log(`[OTP Engine] Generated code ${otp} for ${emailKey} (${type})`);
+
+    const transporter = getEmailTransporter();
+    if (transporter) {
+      const fromEmail = process.env.SMTP_FROM || `"PFA Institute" <${process.env.SMTP_USER}>`;
+      const subject = type === "register" ? "Your PFA Institute Registration OTP" : "Your PFA Institute Password Reset OTP";
+      
+      const mailOptions = {
+        from: fromEmail,
+        to: emailKey,
+        subject,
+        text: `Hello,\n\nYour verification code (OTP) for Practical Financial Analyst (PFA) Institute is: ${otp}\n\nThis code is valid for 10 minutes. If you did not request this, please ignore this email.\n\nBest regards,\nPFA Institute Team`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+            <h2 style="color: #1e3a8a; margin-top: 0; font-size: 20px; font-weight: 800; border-bottom: 2px solid #3b82f6; padding-bottom: 12px;">PRACTICAL FINANCIAL ANALYST</h2>
+            <p style="font-size: 14px; color: #4a5568; line-height: 1.5;">Hello,</p>
+            <p style="font-size: 14px; color: #4a5568; line-height: 1.5;">Your security verification code (OTP) to unlock your dashboard is:</p>
+            <div style="background-color: #f8fafc; border: 2px dashed #cbd5e0; padding: 18px; text-align: center; font-size: 28px; font-weight: 800; letter-spacing: 6px; color: #1d4ed8; margin: 24px 0; border-radius: 12px; font-family: monospace;">
+              ${otp}
+            </div>
+            <p style="font-size: 12px; color: #64748b; line-height: 1.5;">This code is valid for 10 minutes. If you did not request this, please ignore this email.</p>
+            <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">© ${new Date().getFullYear()} Practical Financial Analyst Institute • Puratan Bharti</p>
+          </div>
+        `
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        return res.json({
+          success: true,
+          message: `Verification code successfully sent to ${emailKey}!`
+        });
+      } catch (err: any) {
+        console.error("Failed to send OTP email via SMTP:", err);
+        return res.json({
+          success: true,
+          message: "OTP generated, but email delivery failed. (Check server credentials)",
+          devOtp: otp // Send back for testing if SMTP is failing
+        });
+      }
+    } else {
+      // SMTP not configured
+      console.warn("SMTP credentials not configured in environment. Returning dev OTP.");
+      return res.json({
+        success: true,
+        message: "Developer Mode: OTP generated on server (SMTP not configured).",
+        devOtp: otp // Send back for preview testing
+      });
+    }
+  } catch (err: any) {
+    console.error("Error sending OTP:", err);
+    res.status(500).json({ error: "Failed to generate or send verification code." });
+  }
+});
+
+// Student Password Reset API (using verified OTP)
+app.post("/api/student/reset-password-with-otp", (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ error: "Email, OTP code, and new password are required." });
+    }
+
+    const emailKey = email.trim().toLowerCase();
+    const record = activeOtps.get(emailKey);
+
+    if (!record || record.type !== "forgot-password") {
+      return res.status(400).json({ error: "No password reset session found for this email address. Please request a new code." });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      activeOtps.delete(emailKey);
+      return res.status(400).json({ error: "Reset code has expired. Please request a new code." });
+    }
+
+    if (record.otp !== otp.trim()) {
+      return res.status(400).json({ error: "Incorrect verification code. Please check and try again." });
+    }
+
+    // OTP verified, clear it
+    activeOtps.delete(emailKey);
+
+    let students = [];
+    try {
+      students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    } catch (err) {
+      students = [];
+    }
+
+    const studentIndex = students.findIndex((s: any) => s && s.email && s.email.toLowerCase() === emailKey);
+    if (studentIndex === -1) {
+      return res.status(404).json({ error: "No student account found with this email address." });
+    }
+
+    // Update password
+    students[studentIndex].password = newPassword.trim();
+    students[studentIndex].updatedAt = new Date().toISOString();
+
+    saveJson(STUDENTS_FILE, students);
+
+    res.json({
+      success: true,
+      message: "Your password has been successfully reset! You can now log in.",
+      student: {
+        name: students[studentIndex].name,
+        email: students[studentIndex].email,
+        phone: students[studentIndex].phone
+      }
+    });
+  } catch (err: any) {
+    console.error("Error resetting student password:", err);
+    res.status(500).json({ error: "An unexpected error occurred during password reset." });
+  }
+});
+
 // 1. Student Lead registration
 app.post("/api/register-student", (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, otp } = req.body;
     if (!name || !email || !phone) {
       return res.status(400).json({ error: "Name, email, and phone number are required." });
     }
+
+    if (!otp) {
+      return res.status(400).json({ error: "Verification code (OTP) is required." });
+    }
+
+    const emailKey = email.trim().toLowerCase();
+    const record = activeOtps.get(emailKey);
+
+    if (!record || record.type !== "register") {
+      return res.status(400).json({ error: "No registration session found for this email address. Please request a code." });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      activeOtps.delete(emailKey);
+      return res.status(400).json({ error: "Verification code has expired. Please request a new code." });
+    }
+
+    if (record.otp !== otp.trim()) {
+      return res.status(400).json({ error: "Incorrect verification code. Please check and try again." });
+    }
+
+    // Clear OTP record
+    activeOtps.delete(emailKey);
 
     let students = [];
     try {
@@ -84,11 +287,26 @@ app.post("/api/register-student", (req, res) => {
 
     if (!exists) {
       students.push(newStudent);
-      try {
-        saveJson(STUDENTS_FILE, students);
-      } catch (saveErr) {
-        console.warn("Could not write students.json (filesystem may be read-only):", saveErr);
-      }
+    } else {
+      // Update existing student's record with new info, password/PIN
+      students = students.map((s: any) => {
+        if (s && s.email && s.email.toLowerCase() === email.trim().toLowerCase()) {
+          return {
+            ...s,
+            name: name.trim(),
+            phone: phone.trim(),
+            password: (password || phone || "").trim(),
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return s;
+      });
+    }
+
+    try {
+      saveJson(STUDENTS_FILE, students);
+    } catch (saveErr) {
+      console.warn("Could not write students.json (filesystem may be read-only):", saveErr);
     }
 
     // Forward to Google Sheets Web App if configured
@@ -247,7 +465,14 @@ app.post("/api/registered-students-public-check", (req, res) => {
       return res.status(400).json({ error: "Password is required." });
     }
 
-    const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    let students = [];
+    try {
+      students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
+    } catch (loadErr) {
+      console.warn("Could not load students.json during check, resetting to default empty array:", loadErr);
+      students = [];
+    }
+
     const student = students.find(
       (s: any) => s && s.email && s.email.toLowerCase() === email.trim().toLowerCase()
     );
@@ -260,10 +485,14 @@ app.post("/api/registered-students-public-check", (req, res) => {
       if (studentPassword === inputPassword) {
         res.json({ success: true, student: { name: student.name, email: student.email, phone: student.phone } });
       } else {
-        res.status(401).json({ error: "Incorrect password. If you registered previously, your WhatsApp/Phone number is your default password." });
+        res.status(401).json({ 
+          error: "Incorrect password. If you forgot your password, please click the 'Forgot Password?' link below to reset it using an OTP code sent to your email." 
+        });
       }
     } else {
-      res.status(404).json({ error: "No registration record found for this email address. Please register as a new student first!" });
+      res.status(404).json({ 
+        error: "No student account found with this email. Please click 'Create an account' below to sign up as a new student!" 
+      });
     }
   } catch (err) {
     console.error("Error looking up student:", err);
@@ -300,6 +529,22 @@ app.get("/api/admin/student-attempts", (req, res) => {
   } catch (err) {
     console.error("Error retrieving student attempts:", err);
     res.status(500).json({ error: "Failed to retrieve student performance logs." });
+  }
+});
+
+// 4.6 Clear All Student Practice Attempt Logs (Admin Only)
+app.post("/api/admin/clear-all-attempts", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer token-admin")) {
+      return res.status(401).json({ error: "Unauthorized access to clear database." });
+    }
+
+    saveJson(ATTEMPTS_FILE, []);
+    res.json({ success: true, message: "All cohort student attempts successfully cleared!" });
+  } catch (err) {
+    console.error("Error clearing student attempts:", err);
+    res.status(500).json({ error: "Failed to clear student performance logs." });
   }
 });
 

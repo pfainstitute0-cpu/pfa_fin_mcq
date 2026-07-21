@@ -13,6 +13,7 @@ interface MCQEngineProps {
   onAddGeneratedQuestions: (questions: Question[]) => void;
   onClearQuestionsByContext: (cert: CertType, level: CertLevel) => void;
   onAddScore: (isCorrect: boolean, question: Question, selectedIndex: number) => void;
+  isAdmin?: boolean;
 }
 
 export default function MCQEngine({
@@ -22,6 +23,7 @@ export default function MCQEngine({
   onAddGeneratedQuestions,
   onClearQuestionsByContext,
   onAddScore,
+  isAdmin = false,
 }: MCQEngineProps) {
   // State for Generation Form
   const [generateCount, setGenerateCount] = useState(5);
@@ -256,7 +258,7 @@ export default function MCQEngine({
 
           <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-3 border-t border-slate-100">
             <span>Pool Size: {filteredQuestions.length} Questions</span>
-            {filteredQuestions.length > 0 && (
+            {isAdmin && filteredQuestions.length > 0 && (
               <button
                 id="btn-clear-questions"
                 onClick={handleClearContext}

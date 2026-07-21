@@ -252,6 +252,7 @@ export default function App() {
             onAddGeneratedQuestions={handleAddQuestions}
             onClearQuestionsByContext={handleClearQuestionsByContext}
             onAddScore={handleAddScore}
+            isAdmin={isAdmin}
           />
         )}
 
@@ -292,10 +293,10 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider justify-center md:justify-end">
-            {score.total > 0 && (
+            {isAdmin && score.total > 0 && (
               <button
                 onClick={handleResetScore}
-                className="text-[10px] text-rose-500 hover:text-rose-700 transition-all uppercase tracking-wider font-mono cursor-pointer animate-pulse"
+                className="text-[10px] text-rose-500 hover:text-rose-700 transition-all uppercase tracking-wider font-mono cursor-pointer"
                 id="btn-reset-score"
               >
                 Reset Stats

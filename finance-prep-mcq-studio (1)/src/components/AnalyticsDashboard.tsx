@@ -35,6 +35,7 @@ export default function AnalyticsDashboard({ isAdmin = false, adminToken = null 
 
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
   const [certFilter, setCertFilter] = useState<"ALL" | CertType>("ALL");
+  const [cohortTab, setCohortTab] = useState<"subject" | "section" | "time" | "course">("course");
 
   useEffect(() => {
     if (isAdmin && adminToken) {
@@ -84,13 +85,37 @@ export default function AnalyticsDashboard({ isAdmin = false, adminToken = null 
     }
   };
 
-  const handleClearStats = () => {
-    if (window.confirm("Are you sure you want to clear your local performance metrics history? This action is irreversible.")) {
-      localStorage.removeItem("finance_prep_attempts_log");
-      localStorage.removeItem("finance_prep_cumulative_score");
-      setAttempts([]);
-      // Reload page to notify parent app components of stats reset
-      window.location.reload();
+  const handleClearStats = async () => {
+    if (isAdmin && adminToken) {
+      if (window.confirm("WARNING: Are you sure you want to clear ALL student performance logs from the server? This is a permanent administrative action.")) {
+        try {
+          const res = await fetch("/api/admin/clear-all-attempts", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${adminToken}`
+            }
+          });
+          if (res.ok) {
+            alert("All student attempts cleared successfully.");
+            window.location.reload();
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            alert(errData.error || "Failed to clear student attempts.");
+          }
+        } catch (err) {
+          console.error("Failed to clear server student attempts:", err);
+          alert("Network failure. Could not connect to server to clear logs.");
+        }
+      }
+    } else {
+      if (window.confirm("Are you sure you want to clear your local performance metrics history? This action is irreversible.")) {
+        localStorage.removeItem("finance_prep_attempts_log");
+        localStorage.removeItem("finance_prep_cumulative_score");
+        setAttempts([]);
+        // Reload page to notify parent app components of stats reset
+        window.location.reload();
+      }
     }
   };
 
@@ -145,6 +170,72 @@ export default function AnalyticsDashboard({ isAdmin = false, adminToken = null 
   const strengths = categoryStats.filter((cat) => cat.accuracy >= 70 && cat.total >= 1);
   const focusAreas = categoryStats.filter((cat) => cat.accuracy < 60 && cat.total >= 1);
 
+  // --- Section-wise performance ---
+  const sectionMap: { [sec: string]: { total: number; correct: number; cert: CertType; level: CertLevel } } = {};
+  filteredAttempts.forEach((att) => {
+    const secName = `${att.cert} ${att.level}`;
+    if (!sectionMap[secName]) {
+      sectionMap[secName] = { total: 0, correct: 0, cert: att.cert, level: att.level };
+    }
+    sectionMap[secName].total += 1;
+    if (att.isCorrect) {
+      sectionMap[secName].correct += 1;
+    }
+  });
+  const sectionStats = Object.keys(sectionMap).map((secName) => {
+    const item = sectionMap[secName];
+    const acc = Math.round((item.correct / item.total) * 100);
+    return { name: secName, total: item.total, correct: item.correct, accuracy: acc, cert: item.cert, level: item.level };
+  }).sort((a, b) => b.total - a.total);
+
+  // --- Time-wise study rhythm ---
+  // A. Diurnal Cycle hourly blocks
+  const timeBlocks = [
+    { label: "🌅 Morning (06:00 - 12:00)", hours: Array.from({ length: 6 }, (_, i) => i + 6), total: 0, correct: 0 },
+    { label: "☀️ Afternoon (12:00 - 18:00)", hours: Array.from({ length: 6 }, (_, i) => i + 12), total: 0, correct: 0 },
+    { label: "🌇 Evening (18:00 - 00:00)", hours: Array.from({ length: 6 }, (_, i) => i + 18), total: 0, correct: 0 },
+    { label: "🌙 Night (00:00 - 06:00)", hours: Array.from({ length: 6 }, (_, i) => i), total: 0, correct: 0 },
+  ];
+  
+  filteredAttempts.forEach((att) => {
+    const dt = new Date(att.timestamp);
+    const hr = dt.getHours();
+    const block = timeBlocks.find((tb) => tb.hours.includes(hr));
+    if (block) {
+      block.total += 1;
+      if (att.isCorrect) {
+        block.correct += 1;
+      }
+    }
+  });
+
+  const timeBlockStats = timeBlocks.map((tb) => {
+    const acc = tb.total > 0 ? Math.round((tb.correct / tb.total) * 100) : 0;
+    return { label: tb.label, total: tb.total, correct: tb.correct, accuracy: acc };
+  });
+
+  // B. Weekly cadence
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weeklyMap: { [day: string]: { total: number; correct: number } } = {};
+  dayNames.forEach((d) => {
+    weeklyMap[d] = { total: 0, correct: 0 };
+  });
+  
+  filteredAttempts.forEach((att) => {
+    const dt = new Date(att.timestamp);
+    const dayName = dayNames[dt.getDay()];
+    weeklyMap[dayName].total += 1;
+    if (att.isCorrect) {
+      weeklyMap[dayName].correct += 1;
+    }
+  });
+
+  const weeklyStats = dayNames.map((day) => {
+    const item = weeklyMap[day];
+    const acc = item.total > 0 ? Math.round((item.correct / item.total) * 100) : 0;
+    return { day, total: item.total, correct: item.correct, accuracy: acc };
+  });
+
   return (
     <div className="space-y-6 animate-fadeIn" id="analytics-dashboard-root">
       {/* Header Banner */}
@@ -168,12 +259,13 @@ export default function AnalyticsDashboard({ isAdmin = false, adminToken = null 
             </p>
           </div>
 
-          {totalAttempted > 0 && !isAdmin && (
+          {isAdmin && (
             <button
               onClick={handleClearStats}
-              className="px-4 py-2 bg-rose-900/20 hover:bg-rose-900/40 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-bold transition-all cursor-pointer w-fit"
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white border border-rose-700 rounded-xl text-xs font-bold transition-all cursor-pointer w-fit"
+              id="admin-clear-metrics-btn"
             >
-              Clear Metrics History
+              Clear Cohort Metrics History
             </button>
           )}
         </div>
@@ -459,6 +551,203 @@ export default function AnalyticsDashboard({ isAdmin = false, adminToken = null 
               </div>
             </div>
           )}
+
+          {/* Advanced Curriculum & Cohort Analysis Panel */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6" id="cohort-analysis-panel">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="space-y-1">
+                <h3 className="font-display font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Award className="w-4.5 h-4.5 text-blue-600" />
+                  Advanced Cohort & Curriculum Analysis
+                </h3>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  Detailed analytics covering courses, specific syllabus levels, topics, and study rhythm statistics.
+                </p>
+              </div>
+
+              {/* Sub-tab navigation */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/50 self-start sm:self-center">
+                {(["course", "section", "subject", "time"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setCohortTab(tab)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      cohortTab === tab 
+                        ? "bg-white text-blue-700 shadow-sm animate-fadeIn" 
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* TAB CONTENT */}
+            {cohortTab === "course" && (
+              <div className="space-y-4 animate-fadeIn">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {certStats.map((stat) => (
+                    <div key={stat.cert} className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 flex flex-col justify-between">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wide">{stat.cert} Course Portfolio</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          stat.accuracy >= 75 ? "bg-emerald-100 text-emerald-800" : stat.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-600"
+                        }`}>
+                          {stat.accuracy > 0 ? `${stat.accuracy}% Accuracy` : "No Attempts"}
+                        </span>
+                      </div>
+                      
+                      <div className="mt-4 space-y-1.5 text-xs text-slate-500">
+                        <div className="flex justify-between">
+                          <span>Total Practice Runs:</span>
+                          <span className="font-bold text-slate-800">{stat.total}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Successful Answers:</span>
+                          <span className="font-bold text-emerald-600">{stat.correct}</span>
+                        </div>
+                      </div>
+
+                      {/* Bar graph */}
+                      <div className="mt-4 w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            stat.accuracy >= 75 ? "bg-emerald-500" : stat.accuracy >= 50 ? "bg-blue-500" : "bg-slate-300"
+                          }`}
+                          style={{ width: `${stat.total > 0 ? stat.accuracy : 0}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {cohortTab === "section" && (
+              <div className="space-y-4 animate-fadeIn">
+                {sectionStats.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-6">No level-wise data recorded yet. Take a practice session to load stats.</p>
+                ) : (
+                  <div className="border border-slate-100 rounded-xl overflow-hidden bg-white">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 font-bold uppercase text-[9px] border-b border-slate-100">
+                          <th className="p-3">Syllabus Section (Level)</th>
+                          <th className="p-3 text-center">Total Run</th>
+                          <th className="p-3 text-center">Correct</th>
+                          <th className="p-3 text-right">Accuracy Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sectionStats.map((sec, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-3 font-bold text-slate-800">{sec.name}</td>
+                            <td className="p-3 text-center text-slate-600 font-mono font-medium">{sec.total}</td>
+                            <td className="p-3 text-center text-emerald-600 font-mono font-bold">{sec.correct}</td>
+                            <td className="p-3 text-right">
+                              <span className={`inline-block text-[10px] font-bold font-mono px-2 py-0.5 rounded ${
+                                sec.accuracy >= 70 ? "bg-emerald-100 text-emerald-800" : sec.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                              }`}>
+                                {sec.accuracy}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {cohortTab === "subject" && (
+              <div className="space-y-4 animate-fadeIn">
+                {categoryStats.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-6">No subject-wise data recorded yet. Take a practice session to load stats.</p>
+                ) : (
+                  <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
+                    {categoryStats.map((cat, idx) => (
+                      <div key={idx} className="border border-slate-100 bg-slate-50/30 p-3.5 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-extrabold text-slate-800 truncate">{cat.name}</span>
+                          <span className="font-mono font-extrabold text-slate-500 text-[10px] bg-slate-100 px-2 py-0.5 rounded">
+                            {cat.correct}/{cat.total} ok
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-center gap-3.5">
+                          <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                cat.accuracy >= 75 ? "bg-emerald-500" : cat.accuracy >= 50 ? "bg-blue-500" : "bg-rose-500"
+                              }`}
+                              style={{ width: `${cat.accuracy}%` }}
+                            ></div>
+                          </div>
+                          <span className={`text-[11px] font-extrabold font-mono shrink-0 w-10 text-right ${
+                            cat.accuracy >= 75 ? "text-emerald-600" : cat.accuracy >= 50 ? "text-blue-600" : "text-rose-500"
+                          }`}>
+                            {cat.accuracy}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {cohortTab === "time" && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Diurnal Time Blocks */}
+                <div className="space-y-3">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Diurnal Peak Activity Blocks</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {timeBlockStats.map((tb, idx) => (
+                      <div key={idx} className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex flex-col justify-between">
+                        <div>
+                          <span className="text-slate-800 font-bold text-xs block mb-1">{tb.label}</span>
+                          <div className="text-[10px] text-slate-500 font-medium">Practice Vol: <span className="font-bold text-slate-700">{tb.total} runs</span></div>
+                        </div>
+                        
+                        <div className="mt-4 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Accuracy</span>
+                          <span className={`text-xs font-extrabold font-mono px-2 py-0.5 rounded ${
+                            tb.total === 0 ? "bg-slate-100 text-slate-400" : tb.accuracy >= 70 ? "bg-emerald-100 text-emerald-800" : tb.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                          }`}>
+                            {tb.total > 0 ? `${tb.accuracy}%` : "No activity"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Weekly cadence heatmap / progress bars */}
+                <div className="space-y-3">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Weekly Activity Rhythms</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                    {weeklyStats.map((ws, idx) => (
+                      <div key={idx} className="bg-slate-50/30 border border-slate-100 rounded-xl p-3 text-center space-y-2">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">{ws.day.substring(0, 3)}</span>
+                        
+                        <div className="text-xs font-bold text-slate-800">{ws.total}</div>
+                        <p className="text-[9px] text-slate-400 font-medium">attempts</p>
+
+                        <div className="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-blue-500 rounded-full" 
+                            style={{ width: `${ws.total > 0 ? Math.min((ws.total / 15) * 100, 100) : 0}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Detailed Attempts Log / Review Panel */}
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
