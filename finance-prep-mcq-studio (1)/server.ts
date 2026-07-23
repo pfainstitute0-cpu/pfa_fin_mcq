@@ -94,6 +94,9 @@ function syncStudentToGoogleSheets(student: any) {
   const endsAt = student.subscriptionEndsAt;
   const daysRemaining = endsAt ? Math.max(0, Math.ceil((endsAt - Date.now()) / (1000 * 60 * 60 * 24))) : 0;
   const subscriptionValidTill = endsAt ? new Date(endsAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "N/A";
+  const paidAtFormatted = student.paymentSubmittedAt 
+    ? new Date(student.paymentSubmittedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) 
+    : (student.isPaid ? "Verified Active" : "Unpaid");
 
   fetch(sheetsUrl, {
     method: "POST",
@@ -105,7 +108,7 @@ function syncStudentToGoogleSheets(student: any) {
       phone: student.phone,
       utr: student.utr || (student.isPaid ? "ADMIN_VERIFIED" : "NONE"),
       isPaid: !!student.isPaid,
-      paymentStatus: student.isPaid ? "Verified Paid" : "Unpaid / Locked",
+      paymentStatus: student.isPaid ? `Verified Paid (${paidAtFormatted})` : "Unpaid / Locked",
       paidAt: student.paymentSubmittedAt || new Date().toISOString(),
       subscriptionEndsAt: student.subscriptionEndsAt ? new Date(student.subscriptionEndsAt).toISOString() : "N/A",
       subscriptionValidTill: subscriptionValidTill,
@@ -1172,21 +1175,25 @@ app.get("/api/download-leads-csv", (req, res) => {
 
     const students = loadJson(STUDENTS_FILE, DEFAULT_STUDENTS);
 
-    // CSV formulation with Payment & Subscription Validity columns
-    let csvContent = "\uFEFFID,Name,Email,Phone Number,Registration Date,Payment Status,12-Digit UPI UTR,Subscription Valid Until,Days Remaining\n"; // Added BOM for Excel UTF-8 compliance
+    // CSV formulation with Payment (Column F) & Subscription Expiration (Column G)
+    let csvContent = "\uFEFFID,Name,Email,Phone Number,12-Digit UPI UTR,Payment Status (Paid & When),Subscription Expiration (Valid Until),Days Remaining,Registration Date\n"; // Added BOM for Excel UTF-8 compliance
     students.forEach((s: any) => {
       const escapedName = `"${(s.name || "").replace(/"/g, '""')}"`;
       const escapedEmail = `"${(s.email || "").replace(/"/g, '""')}"`;
       const escapedPhone = `"${(s.phone || "").replace(/"/g, '""')}"`;
       const escapedUtr = `"${(s.utr || (s.isPaid ? "ADMIN_VERIFIED" : "NONE")).replace(/"/g, '""')}"`;
-      const paymentStatus = s.isPaid ? "Verified Active" : "Unpaid / Locked";
       
+      const paidAtFormatted = s.paymentSubmittedAt 
+        ? new Date(s.paymentSubmittedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) 
+        : (s.isPaid ? "Verified Active" : "Unpaid");
+      const paymentStatusWithDate = s.isPaid ? `"Verified Paid (${paidAtFormatted})"` : `"Unpaid / Locked"`;
+
       const endsAt = s.subscriptionEndsAt;
       const daysRemaining = endsAt ? Math.max(0, Math.ceil((endsAt - Date.now()) / (1000 * 60 * 60 * 24))) : 0;
       const validUntil = endsAt ? new Date(endsAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "N/A";
       const escapedValidUntil = `"${validUntil.replace(/"/g, '""')}"`;
 
-      csvContent += `${s.id},${escapedName},${escapedEmail},${escapedPhone},${s.registeredAt || "N/A"},${paymentStatus},${escapedUtr},${escapedValidUntil},${daysRemaining}\n`;
+      csvContent += `${s.id},${escapedName},${escapedEmail},${escapedPhone},${escapedUtr},${paymentStatusWithDate},${escapedValidUntil},${daysRemaining},"${s.registeredAt || "N/A"}"\n`;
     });
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

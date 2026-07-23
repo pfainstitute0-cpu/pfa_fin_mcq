@@ -569,7 +569,7 @@ export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onL
                     : (isForgotPasswordMode
                       ? "Enter your registered email address to receive a password reset code."
                       : (isLoginMode 
-                        ? "Enter your registered email address to instantly retrieve your active learning dashboard."
+                        ? "Enter your registered email ID & password to unlock your learning workspace."
                         : "Register with your name, Gmail, and WhatsApp number to unlock premium study tools."
                       )
                     )
@@ -577,6 +577,38 @@ export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onL
                 }
               </p>
             </div>
+
+            {/* Explicit Tab Switcher inside Portal Card */}
+            {verificationStep === 'form' && !isForgotPasswordMode && !success && (
+              <div className="flex bg-slate-100 p-1 rounded-xl gap-1 text-xs font-bold border border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLoginMode(false);
+                    setError(null);
+                  }}
+                  className={`flex-1 py-2 rounded-lg transition-all text-center cursor-pointer flex items-center justify-center gap-1.5 ${
+                    !isLoginMode ? "bg-white text-blue-700 shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5" />
+                  New Registration
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLoginMode(true);
+                    setError(null);
+                  }}
+                  className={`flex-1 py-2 rounded-lg transition-all text-center cursor-pointer flex items-center justify-center gap-1.5 ${
+                    isLoginMode ? "bg-white text-blue-700 shadow-xs font-extrabold" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Student Login
+                </button>
+              </div>
+            )}
 
             {success ? (
               <div className="text-center py-10 space-y-4 animate-in fade-in duration-300" id="portal-success-view">
