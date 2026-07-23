@@ -48,3 +48,12 @@ export interface CustomQuestionInput {
   cert: CertType;
   level: CertLevel;
 }
+
+export interface StudentInfo {
+  name: string;
+  email: string;
+  phone: string;
+  isPaid?: boolean;
+  subscriptionEndsAt?: number;
+}
+

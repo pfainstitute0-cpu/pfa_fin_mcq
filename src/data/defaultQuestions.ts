@@ -98,6 +98,96 @@ export const defaultQuestions: Question[] = [
     correctAnswerIndex: 1,
     explanation: "Two events are independent if P(A and B) = P(A) * P(B). Here, P(A) * P(B) = 0.40 * 0.50 = 0.20, which exactly matches the joint probability of 0.20. Therefore, the events are statistically independent.",
   },
+  {
+    id: "cfa-l1-def3",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Financial Statement Analysis",
+    text: "Under IFRS, interest paid can be classified as either an operating activity or a financing activity, whereas under US GAAP, interest paid is classified as:",
+    options: [
+      "Operating activities only",
+      "Financing activities only",
+      "Investing activities only",
+      "Operating or financing activities"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "Under US GAAP, interest paid must be classified as an operating activity. Under IFRS, interest paid can be classified as either an operating or a financing activity, providing firms with greater accounting flexibility.",
+  },
+  {
+    id: "cfa-l1-def4",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Corporate Issuers",
+    text: "Which of the following is most likely to decrease a company's weighted average cost of capital (WACC)?",
+    options: [
+      "An increase in the marginal corporate tax rate",
+      "An increase in the risk-free rate of return",
+      "An increase in the company's beta",
+      "A decrease in the proportion of debt financing"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "Since interest expense is tax-deductible, the after-tax cost of debt is rd * (1 - t). An increase in the marginal corporate tax rate (t) decreases the after-tax cost of debt, which directly decreases the company's WACC, holding all other components constant.",
+  },
+  {
+    id: "cfa-l1-def5",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Fixed Income",
+    text: "A 5-year coupon bond has a yield to maturity of 6%. If interest rates suddenly increase by 100 basis points, which of the following measures is most appropriate to estimate the percentage price change of the bond?",
+    options: [
+      "Modified Duration",
+      "Macaulay Duration",
+      "Effective Duration",
+      "Convexity alone"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "Modified duration measures the percentage price sensitivity of a bond to a change in its own yield to maturity, assuming cash flows do not change when interest rates change. Effective duration is used for bonds with embedded options. Macaulay duration measures weighted average time to receive cash flows.",
+  },
+  {
+    id: "cfa-l1-def6",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Derivatives",
+    text: "Which of the following derivative contracts is best described as an over-the-counter (OTC) agreement that is highly customizable and carries counterparty credit risk?",
+    options: [
+      "A forward contract",
+      "A futures contract",
+      "An exchange-traded option",
+      "A cleared swap contract"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "Forward contracts are private, custom-tailored agreements traded over-the-counter (OTC) and are subject to counterparty credit risk because they lack a central clearinghouse. Futures contracts are standardized and traded on regulated exchanges with a clearinghouse acting as counterparty, virtually eliminating credit risk.",
+  },
+  {
+    id: "cfa-l1-def7",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Alternative Investments",
+    text: "In private equity, the fee structure typically includes a management fee and carried interest. Carried interest represents:",
+    options: [
+      "The general partner's share of the fund's profits",
+      "The limited partner's return of initial capital",
+      "The transaction fees paid to external advisory boards",
+      "The annual fee for managing the fund's assets"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "Carried interest is the share of profits (typically 20%) that general partners (GPs) receive from the fund's capital gains once a hurdle rate (preferred return) has been returned to the limited partners (LPs). This aligns the GPs' incentives with the LPs' investment outcomes.",
+  },
+  {
+    id: "cfa-l1-def8",
+    cert: "CFA",
+    level: "Level 1",
+    category: "Economics",
+    text: "If a central bank carries out open market operations by purchasing government bonds, the most likely immediate impact on the money supply and short-term interest rates is:",
+    options: [
+      "Money supply increases, short-term interest rates decrease",
+      "Money supply decreases, short-term interest rates increase",
+      "Money supply increases, short-term interest rates increase",
+      "Money supply decreases, short-term interest rates decrease"
+    ],
+    correctAnswerIndex: 0,
+    explanation: "When a central bank buys government bonds, it injects reserves/liquidity into the banking system, which increases the money supply. This expansion of credit reserves drives down short-term interest rates (such as the interbank lending rate).",
+  },
 
   // --- CFA LEVEL 2 ---
   {

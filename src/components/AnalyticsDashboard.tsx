@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { 
   Award, TrendingUp, HelpCircle, CheckCircle2, XCircle, 
-  RotateCcw, ShieldAlert, Sparkles, BookOpen, Clock, Calendar, ChevronDown, ChevronUp 
+  RotateCcw, ShieldAlert, Sparkles, BookOpen, Clock, Calendar, ChevronDown, ChevronUp, Users, Loader2 
 } from "lucide-react";
 import { CertType, CertLevel, Question } from "../types";
 
-interface AttemptLog {
+export interface AttemptLog {
+  id?: string;
   questionId: string;
   questionText: string;
   cert: CertType;
@@ -15,14 +16,119 @@ interface AttemptLog {
   correctIndex: number;
   isCorrect: boolean;
   timestamp: number;
+  studentEmail?: string;
+  studentName?: string;
 }
 
-export default function AnalyticsDashboard() {
+interface AnalyticsDashboardProps {
+  isAdmin?: boolean;
+  adminToken?: string | null;
+  studentInfo?: { name: string; email: string; phone: string } | null;
+}
+
+export default function AnalyticsDashboard({ isAdmin = false, adminToken = null, studentInfo = null }: AnalyticsDashboardProps) {
   const [attempts, setAttempts] = useState<AttemptLog[]>([]);
+  const [allServerAttempts, setAllServerAttempts] = useState<AttemptLog[]>([]);
+  const [students, setStudents] = useState<{ id: string; name: string; email: string; phone: string; registeredAt: string }[]>([]);
+  const [telemetryEvents, setTelemetryEvents] = useState<any[]>([]);
+  const [selectedStudentEmail, setSelectedStudentEmail] = useState<string>("ALL_STUDENTS");
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   const [expandedAttemptId, setExpandedAttemptId] = useState<string | null>(null);
   const [certFilter, setCertFilter] = useState<"ALL" | CertType>("ALL");
+  const [cohortTab, setCohortTab] = useState<"subject" | "section" | "time" | "course" | "cross" | "telemetry">("course");
 
   useEffect(() => {
+    if (isAdmin && adminToken) {
+      setLoading(true);
+      setErrorMsg(null);
+      
+      const fetchStudents = fetch("/api/registered-students", {
+        headers: { "Authorization": `Bearer ${adminToken}` }
+      }).then(res => {
+        if (!res.ok) throw new Error("Failed to load student list");
+        return res.json();
+      });
+
+      const fetchAttempts = fetch("/api/admin/student-attempts", {
+        headers: { "Authorization": `Bearer ${adminToken}` }
+      }).then(res => {
+        if (!res.ok) throw new Error("Failed to load attempts logs");
+        return res.json();
+      });
+
+      const fetchTelemetry = fetch("/api/admin/telemetry-events", {
+        headers: { "Authorization": `Bearer ${adminToken}` }
+      }).then(res => {
+        if (!res.ok) throw new Error("Failed to load telemetry logs");
+        return res.json();
+      });
+
+      Promise.all([fetchStudents, fetchAttempts, fetchTelemetry])
+        .then(([studentsData, attemptsData, telemetryData]) => {
+          setStudents(studentsData.students || []);
+          setAllServerAttempts(attemptsData.attempts || []);
+          setTelemetryEvents(telemetryData.events || []);
+        })
+        .catch(err => {
+          console.error("Admin fetch analytics data error:", err);
+          setErrorMsg("Could not load full analytics from server. Showing offline local data.");
+          loadLocalLogs();
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      loadLocalLogs();
+      if (studentInfo?.email) {
+        setLoading(true);
+        fetch("/api/student/attempts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: studentInfo.email })
+        })
+          .then(res => {
+            if (!res.ok) throw new Error("Sync error");
+            return res.json();
+          })
+          .then(data => {
+            if (data && data.success && Array.isArray(data.attempts)) {
+              // Merge local logs with server logs, keeping unique timestamps/IDs
+              const saved = localStorage.getItem("finance_prep_attempts_log");
+              let localLogs: AttemptLog[] = [];
+              if (saved) {
+                try { localLogs = JSON.parse(saved); } catch (e) { console.error(e); }
+              }
+              
+              const mergedMap = new Map<string, AttemptLog>();
+              // Load server logs first
+              data.attempts.forEach((att: AttemptLog) => {
+                const key = `${att.questionId}-${att.timestamp}`;
+                mergedMap.set(key, att);
+              });
+              // Load local logs on top (takes priority / most up-to-date)
+              localLogs.forEach((att: AttemptLog) => {
+                const key = `${att.questionId}-${att.timestamp}`;
+                mergedMap.set(key, att);
+              });
+
+              const mergedLogs = Array.from(mergedMap.values()).sort((a, b) => b.timestamp - a.timestamp);
+              setAttempts(mergedLogs);
+              localStorage.setItem("finance_prep_attempts_log", JSON.stringify(mergedLogs));
+            }
+          })
+          .catch(err => {
+            console.warn("Could not synchronize student attempts from server:", err);
+          })
+          .finally(() => {
+            setLoading(false);
+          });
+      }
+    }
+  }, [isAdmin, adminToken, studentInfo]);
+
+  const loadLocalLogs = () => {
     const saved = localStorage.getItem("finance_prep_attempts_log");
     if (saved) {
       try {
@@ -31,20 +137,52 @@ export default function AnalyticsDashboard() {
         console.error("Failed to parse attempts log", e);
       }
     }
-  }, []);
+  };
 
-  const handleClearStats = () => {
-    if (window.confirm("Are you sure you want to clear your local performance metrics history? This action is irreversible.")) {
-      localStorage.removeItem("finance_prep_attempts_log");
-      localStorage.removeItem("finance_prep_cumulative_score");
-      setAttempts([]);
-      // Reload page to notify parent app components of stats reset
-      window.location.reload();
+  const handleClearStats = async () => {
+    if (isAdmin && adminToken) {
+      if (window.confirm("WARNING: Are you sure you want to clear ALL student performance logs from the server? This is a permanent administrative action.")) {
+        try {
+          const res = await fetch("/api/admin/clear-all-attempts", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${adminToken}`
+            }
+          });
+          if (res.ok) {
+            alert("All student attempts cleared successfully.");
+            window.location.reload();
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            alert(errData.error || "Failed to clear student attempts.");
+          }
+        } catch (err) {
+          console.error("Failed to clear server student attempts:", err);
+          alert("Network failure. Could not connect to server to clear logs.");
+        }
+      }
+    } else {
+      if (window.confirm("Are you sure you want to clear your local performance metrics history? This action is irreversible.")) {
+        localStorage.removeItem("finance_prep_attempts_log");
+        localStorage.removeItem("finance_prep_cumulative_score");
+        setAttempts([]);
+        // Reload page to notify parent app components of stats reset
+        window.location.reload();
+      }
     }
   };
 
+  // Determine active attempts pool
+  const activeAttemptsPool = isAdmin 
+    ? (selectedStudentEmail === "ALL_STUDENTS" 
+        ? allServerAttempts 
+        : allServerAttempts.filter(att => att.studentEmail?.toLowerCase() === selectedStudentEmail.toLowerCase())
+      )
+    : attempts;
+
   // Filter attempts based on certificate selection
-  const filteredAttempts = attempts.filter(
+  const filteredAttempts = activeAttemptsPool.filter(
     (att) => certFilter === "ALL" || att.cert === certFilter
   );
 
@@ -56,7 +194,7 @@ export default function AnalyticsDashboard() {
 
   // Breakdown by Certification
   const certStats = ["CMT", "CFA", "CFP", "FRM"].map((c) => {
-    const certAttempts = attempts.filter((att) => att.cert === c);
+    const certAttempts = activeAttemptsPool.filter((att) => att.cert === c);
     const certTotal = certAttempts.length;
     const certCorrect = certAttempts.filter((att) => att.isCorrect).length;
     const certAccuracy = certTotal > 0 ? Math.round((certCorrect / certTotal) * 100) : 0;
@@ -86,6 +224,72 @@ export default function AnalyticsDashboard() {
   const strengths = categoryStats.filter((cat) => cat.accuracy >= 70 && cat.total >= 1);
   const focusAreas = categoryStats.filter((cat) => cat.accuracy < 60 && cat.total >= 1);
 
+  // --- Section-wise performance ---
+  const sectionMap: { [sec: string]: { total: number; correct: number; cert: CertType; level: CertLevel } } = {};
+  filteredAttempts.forEach((att) => {
+    const secName = `${att.cert} ${att.level}`;
+    if (!sectionMap[secName]) {
+      sectionMap[secName] = { total: 0, correct: 0, cert: att.cert, level: att.level };
+    }
+    sectionMap[secName].total += 1;
+    if (att.isCorrect) {
+      sectionMap[secName].correct += 1;
+    }
+  });
+  const sectionStats = Object.keys(sectionMap).map((secName) => {
+    const item = sectionMap[secName];
+    const acc = Math.round((item.correct / item.total) * 100);
+    return { name: secName, total: item.total, correct: item.correct, accuracy: acc, cert: item.cert, level: item.level };
+  }).sort((a, b) => b.total - a.total);
+
+  // --- Time-wise study rhythm ---
+  // A. Diurnal Cycle hourly blocks
+  const timeBlocks = [
+    { label: "🌅 Morning (06:00 - 12:00)", hours: Array.from({ length: 6 }, (_, i) => i + 6), total: 0, correct: 0 },
+    { label: "☀️ Afternoon (12:00 - 18:00)", hours: Array.from({ length: 6 }, (_, i) => i + 12), total: 0, correct: 0 },
+    { label: "🌇 Evening (18:00 - 00:00)", hours: Array.from({ length: 6 }, (_, i) => i + 18), total: 0, correct: 0 },
+    { label: "🌙 Night (00:00 - 06:00)", hours: Array.from({ length: 6 }, (_, i) => i), total: 0, correct: 0 },
+  ];
+  
+  filteredAttempts.forEach((att) => {
+    const dt = new Date(att.timestamp);
+    const hr = dt.getHours();
+    const block = timeBlocks.find((tb) => tb.hours.includes(hr));
+    if (block) {
+      block.total += 1;
+      if (att.isCorrect) {
+        block.correct += 1;
+      }
+    }
+  });
+
+  const timeBlockStats = timeBlocks.map((tb) => {
+    const acc = tb.total > 0 ? Math.round((tb.correct / tb.total) * 100) : 0;
+    return { label: tb.label, total: tb.total, correct: tb.correct, accuracy: acc };
+  });
+
+  // B. Weekly cadence
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weeklyMap: { [day: string]: { total: number; correct: number } } = {};
+  dayNames.forEach((d) => {
+    weeklyMap[d] = { total: 0, correct: 0 };
+  });
+  
+  filteredAttempts.forEach((att) => {
+    const dt = new Date(att.timestamp);
+    const dayName = dayNames[dt.getDay()];
+    weeklyMap[dayName].total += 1;
+    if (att.isCorrect) {
+      weeklyMap[dayName].correct += 1;
+    }
+  });
+
+  const weeklyStats = dayNames.map((day) => {
+    const item = weeklyMap[day];
+    const acc = item.total > 0 ? Math.round((item.correct / item.total) * 100) : 0;
+    return { day, total: item.total, correct: item.correct, accuracy: acc };
+  });
+
   return (
     <div className="space-y-6 animate-fadeIn" id="analytics-dashboard-root">
       {/* Header Banner */}
@@ -102,25 +306,97 @@ export default function AnalyticsDashboard() {
               </span>
             </div>
             <h2 className="font-display text-2xl font-extrabold text-white tracking-tight">
-              Assessment Insights
+              {studentInfo ? `Welcome back, ${studentInfo.name}!` : "Assessment Insights"}
             </h2>
             <p className="text-xs text-slate-400 mt-1 max-w-xl leading-relaxed">
-              Diagnostic analytics formulated directly from your practice sessions. Identify syllabus strengths, locate topic focus gaps, and review your step-by-step history logs.
+              {studentInfo 
+                ? `Here are your real-time cloud-synchronized learning metrics. Continue practicing to target your knowledge gaps and reach 100% exam readiness!`
+                : "Diagnostic analytics formulated directly from your practice sessions. Identify syllabus strengths, locate topic focus gaps, and review your step-by-step history logs."
+              }
             </p>
           </div>
 
-          {totalAttempted > 0 && (
+          {isAdmin && (
             <button
               onClick={handleClearStats}
-              className="px-4 py-2 bg-rose-900/20 hover:bg-rose-900/40 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-bold transition-all cursor-pointer w-fit"
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white border border-rose-700 rounded-xl text-xs font-bold transition-all cursor-pointer w-fit"
+              id="admin-clear-metrics-btn"
             >
-              Clear Metrics History
+              Clear Cohort Metrics History
             </button>
           )}
         </div>
       </div>
 
-      {attempts.length === 0 ? (
+      {errorMsg && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium">
+          ⚠️ {errorMsg}
+        </div>
+      )}
+
+      {/* Admin Student Selector Controls */}
+      {isAdmin && (
+        <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 shadow-sm space-y-4" id="admin-analytics-selector">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                <Users className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">Student-Wise Assessment Insights</h3>
+                <p className="text-[10px] text-slate-500 font-medium">Analyze individual student logs and target certification study weaknesses.</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <label htmlFor="admin-student-select" className="text-xs font-bold text-slate-700 font-sans whitespace-nowrap">Focus Student:</label>
+              <select
+                id="admin-student-select"
+                value={selectedStudentEmail}
+                onChange={(e) => {
+                  setSelectedStudentEmail(e.target.value);
+                  setExpandedAttemptId(null);
+                }}
+                className="bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 font-sans cursor-pointer min-w-[220px]"
+              >
+                <option value="ALL_STUDENTS">👥 All Registered Students ({allServerAttempts.length} logs)</option>
+                {students.map((st) => {
+                  const studentLogsCount = allServerAttempts.filter(l => l.studentEmail?.toLowerCase() === st.email.toLowerCase()).length;
+                  return (
+                    <option key={st.id} value={st.email}>
+                      👤 {st.name} ({studentLogsCount} questions)
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+
+          {selectedStudentEmail !== "ALL_STUDENTS" && (
+            <div className="bg-white/80 rounded-xl p-3 border border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs font-medium text-slate-600">
+              {(() => {
+                const s = students.find(student => student.email.toLowerCase() === selectedStudentEmail.toLowerCase());
+                if (!s) return null;
+                return (
+                  <>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Full Name</span><span className="text-slate-800 font-bold">{s.name}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Email Address</span><span className="text-slate-800 select-all">{s.email}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Phone / WhatsApp</span><span className="text-slate-800 font-mono">{s.phone}</span></div>
+                    <div><span className="text-slate-400 font-bold uppercase text-[9px] block mb-0.5">Registered On</span><span className="text-slate-800">{new Date(s.registeredAt).toLocaleDateString()} at {new Date(s.registeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 space-y-3" id="analytics-loader">
+          <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">Retrieving dynamic assessment data...</p>
+        </div>
+      ) : activeAttemptsPool.length === 0 ? (
         /* Empty State */
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-xl mx-auto space-y-4" id="analytics-empty">
           <div className="inline-flex p-4 bg-blue-50 text-blue-600 rounded-2xl">
@@ -128,7 +404,10 @@ export default function AnalyticsDashboard() {
           </div>
           <h3 className="font-display font-extrabold text-slate-900 text-lg">No Practice Sessions Found</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-            Your performance diagnostics are empty. Jump back into the <strong>Practice Arena</strong> and answer multiple-choice questions to build your active learning analytical report!
+            {isAdmin 
+              ? "The selected student has not answered any multiple-choice practice questions in the arena yet." 
+              : "Your performance diagnostics are empty. Jump back into the Practice Arena and answer multiple-choice questions to build your active learning analytical report!"
+            }
           </p>
         </div>
       ) : (
@@ -232,9 +511,28 @@ export default function AnalyticsDashboard() {
               <div>
                 <h3 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2 pb-3 border-b border-slate-100">
                   <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500" />
-                  Your Study Strengths
+                  {isAdmin ? "Platform & Admin Operational Strengths" : "Your Study Strengths"}
                 </h3>
-                {strengths.length === 0 ? (
+                {isAdmin ? (
+                  <div className="space-y-2.5 mt-3 text-xs font-sans">
+                    <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                      <span className="font-bold text-slate-800">🎯 Full Curriculum Coverage</span>
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-mono">CMT, CFA, CFP, FRM</span>
+                    </div>
+                    <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                      <span className="font-bold text-slate-800">⚡ Auto-Verified 364-Day Access</span>
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-mono">Instant Razorpay Activation</span>
+                    </div>
+                    <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                      <span className="font-bold text-slate-800">📊 Multi-Cohort Student Analytics</span>
+                      <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded font-mono">Real-Time Telemetry & Dropouts</span>
+                    </div>
+                    <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                      <span className="font-bold text-slate-800">🔐 Master Admin & Password Reset</span>
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-mono">Full Account Control</span>
+                    </div>
+                  </div>
+                ) : strengths.length === 0 ? (
                   <p className="text-xs text-slate-400 italic py-6 text-center">
                     Keep answering correctly to build syllabus domains with &gt;70% accuracy!
                   </p>
@@ -255,7 +553,11 @@ export default function AnalyticsDashboard() {
                 )}
               </div>
               <div className="bg-emerald-50 border border-emerald-100/50 rounded-xl p-3 text-[11px] text-emerald-800 mt-4 leading-relaxed">
-                🌟 <strong>Great job!</strong> These are your strongest areas. Standard practice suggests doing occasional reviews here while devoting major efforts to critical study gaps.
+                {isAdmin ? (
+                  <>🛡️ <strong>Admin System Strength:</strong> All systems are operating smoothly. Curriculum pool, payment engine, and student verification telemetry are fully synchronized.</>
+                ) : (
+                  <>🌟 <strong>Great job!</strong> These are your strongest areas. Standard practice suggests doing occasional reviews here while devoting major efforts to critical study gaps.</>
+                )}
               </div>
             </div>
 
@@ -330,107 +632,623 @@ export default function AnalyticsDashboard() {
             </div>
           )}
 
-          {/* Detailed Attempts Log / Review Panel */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-            <h3 className="font-display font-bold text-slate-900 text-sm mb-4 pb-3 border-b border-slate-100">
-              Personalized Question Review History
-            </h3>
-            
-            <div className="space-y-3" id="attempts-log-list">
-              {filteredAttempts.map((att, idx) => {
-                const isExpanded = expandedAttemptId === att.questionId;
-                return (
-                  <div 
-                    key={idx} 
-                    className={`border rounded-xl transition-all ${
-                      att.isCorrect 
-                        ? "bg-emerald-50/20 border-emerald-100 hover:border-emerald-200" 
-                        : "bg-rose-50/20 border-rose-100 hover:border-rose-200"
+          {/* Advanced Curriculum & Cohort Analysis Panel */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6" id="cohort-analysis-panel">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="space-y-1">
+                <h3 className="font-display font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Award className="w-4.5 h-4.5 text-blue-600" />
+                  Advanced Cohort & Curriculum Analysis
+                </h3>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  Detailed analytics covering courses, specific syllabus levels, topics, and study rhythm statistics.
+                </p>
+              </div>
+
+              {/* Sub-tab navigation */}
+              <div className="flex flex-wrap bg-slate-100 p-1 rounded-xl border border-slate-200/50 self-start sm:self-center gap-1">
+                {(isAdmin 
+                  ? ["course", "section", "subject", "cross", "time", "telemetry"] as const 
+                  : ["course", "section", "subject", "cross", "time"] as const
+                ).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setCohortTab(tab)}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      cohortTab === tab 
+                        ? "bg-white text-blue-700 shadow-sm animate-fadeIn" 
+                        : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {/* Log Row Header */}
-                    <div 
-                      onClick={() => setExpandedAttemptId(isExpanded ? null : att.questionId)}
-                      className="p-3.5 flex items-center justify-between gap-4 cursor-pointer select-none"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        {att.isCorrect ? (
-                          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-                        ) : (
-                          <XCircle className="w-5 h-5 text-rose-500 shrink-0" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-800 truncate leading-snug">
-                            {att.questionText}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-sm">
-                              {att.cert} • {att.level}
-                            </span>
-                            <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-sm">
-                              {att.category}
-                            </span>
-                            <span className="text-[9px] text-slate-400 font-medium flex items-center gap-1 font-mono">
-                              <Calendar className="w-3 h-3" />
-                              {new Date(att.timestamp).toLocaleDateString()}
-                            </span>
-                          </div>
+                    {tab === "cross" ? "Cross-Sectional" : tab}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* TAB CONTENT */}
+            {cohortTab === "course" && (
+              <div className="space-y-4 animate-fadeIn">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {certStats.map((stat) => (
+                    <div key={stat.cert} className="border border-slate-100 rounded-xl p-4 bg-slate-50/50 flex flex-col justify-between">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[11px] font-bold text-slate-800 uppercase tracking-wide">{stat.cert} Course Portfolio</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          stat.accuracy >= 75 ? "bg-emerald-100 text-emerald-800" : stat.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-600"
+                        }`}>
+                          {stat.accuracy > 0 ? `${stat.accuracy}% Accuracy` : "No Attempts"}
+                        </span>
+                      </div>
+                      
+                      <div className="mt-4 space-y-1.5 text-xs text-slate-500">
+                        <div className="flex justify-between">
+                          <span>Total Practice Runs:</span>
+                          <span className="font-bold text-slate-800">{stat.total}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Successful Answers:</span>
+                          <span className="font-bold text-emerald-600">{stat.correct}</span>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                          att.isCorrect ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                        }`}>
-                          {att.isCorrect ? "CORRECT" : "MISTAKE"}
-                        </span>
-                        {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                      {/* Bar graph */}
+                      <div className="mt-4 w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            stat.accuracy >= 75 ? "bg-emerald-500" : stat.accuracy >= 50 ? "bg-blue-500" : "bg-slate-300"
+                          }`}
+                          style={{ width: `${stat.total > 0 ? stat.accuracy : 0}%` }}
+                        ></div>
                       </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-                    {/* Expanded details containing rationales and answers */}
-                    {isExpanded && (
-                      <div className="p-4 border-t border-slate-100 bg-white/50 rounded-b-xl space-y-4 text-xs">
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Question Text</span>
-                          <p className="font-semibold text-slate-800 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
-                            {att.questionText}
-                          </p>
+            {cohortTab === "section" && (
+              <div className="space-y-4 animate-fadeIn">
+                {sectionStats.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-6">No level-wise data recorded yet. Take a practice session to load stats.</p>
+                ) : (
+                  <div className="border border-slate-100 rounded-xl overflow-hidden bg-white">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 font-bold uppercase text-[9px] border-b border-slate-100">
+                          <th className="p-3">Syllabus Section (Level)</th>
+                          <th className="p-3 text-center">Total Run</th>
+                          <th className="p-3 text-center">Correct</th>
+                          <th className="p-3 text-right">Accuracy Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sectionStats.map((sec, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-3 font-bold text-slate-800">{sec.name}</td>
+                            <td className="p-3 text-center text-slate-600 font-mono font-medium">{sec.total}</td>
+                            <td className="p-3 text-center text-emerald-600 font-mono font-bold">{sec.correct}</td>
+                            <td className="p-3 text-right">
+                              <span className={`inline-block text-[10px] font-bold font-mono px-2 py-0.5 rounded ${
+                                sec.accuracy >= 70 ? "bg-emerald-100 text-emerald-800" : sec.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                              }`}>
+                                {sec.accuracy}%
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {cohortTab === "subject" && (
+              <div className="space-y-4 animate-fadeIn">
+                {categoryStats.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-6">No subject-wise data recorded yet. Take a practice session to load stats.</p>
+                ) : (
+                  <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
+                    {categoryStats.map((cat, idx) => (
+                      <div key={idx} className="border border-slate-100 bg-slate-50/30 p-3.5 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-extrabold text-slate-800 truncate">{cat.name}</span>
+                          <span className="font-mono font-extrabold text-slate-500 text-[10px] bg-slate-100 px-2 py-0.5 rounded">
+                            {cat.correct}/{cat.total} ok
+                          </span>
                         </div>
-
-                        {/* Selected vs Correct Comparison */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                          <div className="bg-rose-50/50 border border-rose-100/50 p-3 rounded-xl">
-                            <span className="text-[10px] font-bold text-rose-700 block uppercase tracking-wider mb-1">Your Selection</span>
-                            <p className="font-bold text-rose-900">
-                              Option {String.fromCharCode(65 + att.selectedIndex)}
-                            </p>
+                        
+                        <div className="flex items-center gap-3.5">
+                          <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                cat.accuracy >= 75 ? "bg-emerald-500" : cat.accuracy >= 50 ? "bg-blue-500" : "bg-rose-500"
+                              }`}
+                              style={{ width: `${cat.accuracy}%` }}
+                            ></div>
                           </div>
-                          <div className="bg-emerald-50/50 border border-emerald-100/50 p-3 rounded-xl">
-                            <span className="text-[10px] font-bold text-emerald-700 block uppercase tracking-wider mb-1">Correct Answer</span>
-                            <p className="font-bold text-emerald-900">
-                              Option {String.fromCharCode(65 + att.correctIndex)}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Complete pedagogical explanation fallback */}
-                        <div className="space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pedagogical Review Rationale</span>
-                          <div className="bg-blue-50/30 border border-blue-100/40 p-4 rounded-xl text-slate-700 leading-relaxed">
-                            {attempts.find((a) => a.questionId === att.questionId)?.questionId ? (
-                              <p>Please refer to the curriculum explanation provided on the active MCQ list card.</p>
-                            ) : null}
-                            <p className="italic">Textbook reference criteria verified by Gemini's dynamic feedback engine.</p>
-                          </div>
+                          <span className={`text-[11px] font-extrabold font-mono shrink-0 w-10 text-right ${
+                            cat.accuracy >= 75 ? "text-emerald-600" : cat.accuracy >= 50 ? "text-blue-600" : "text-rose-500"
+                          }`}>
+                            {cat.accuracy}%
+                          </span>
                         </div>
                       </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {cohortTab === "time" && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Diurnal Time Blocks */}
+                <div className="space-y-3">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Diurnal Peak Activity Blocks</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {timeBlockStats.map((tb, idx) => (
+                      <div key={idx} className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex flex-col justify-between">
+                        <div>
+                          <span className="text-slate-800 font-bold text-xs block mb-1">{tb.label}</span>
+                          <div className="text-[10px] text-slate-500 font-medium">Practice Vol: <span className="font-bold text-slate-700">{tb.total} runs</span></div>
+                        </div>
+                        
+                        <div className="mt-4 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Accuracy</span>
+                          <span className={`text-xs font-extrabold font-mono px-2 py-0.5 rounded ${
+                            tb.total === 0 ? "bg-slate-100 text-slate-400" : tb.accuracy >= 70 ? "bg-emerald-100 text-emerald-800" : tb.accuracy >= 50 ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                          }`}>
+                            {tb.total > 0 ? `${tb.accuracy}%` : "No activity"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Weekly cadence heatmap / progress bars */}
+                <div className="space-y-3">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Weekly Activity Rhythms</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                    {weeklyStats.map((ws, idx) => (
+                      <div key={idx} className="bg-slate-50/30 border border-slate-100 rounded-xl p-3 text-center space-y-2">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">{ws.day.substring(0, 3)}</span>
+                        
+                        <div className="text-xs font-bold text-slate-800">{ws.total}</div>
+                        <p className="text-[9px] text-slate-400 font-medium">attempts</p>
+
+                        <div className="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-blue-500 rounded-full" 
+                            style={{ width: `${ws.total > 0 ? Math.min((ws.total / 15) * 100, 100) : 0}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {cohortTab === "cross" && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* 1. Program vs Level Cross-Tabulation Matrix */}
+                <div className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Program vs. Syllabus Level Cross-Matrix</h4>
+                      <p className="text-[10px] text-slate-500 font-medium">Cross-dimensional accuracy and question volume across certification tiers.</p>
+                    </div>
+                    <span className="text-[9px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded uppercase font-mono">2D Cohort Cross-Tab</span>
+                  </div>
+
+                  <div className="overflow-x-auto bg-white rounded-xl border border-slate-100 shadow-2xs">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-500 font-bold uppercase text-[9px] border-b border-slate-100">
+                          <th className="p-3">Certification Program</th>
+                          <th className="p-3 text-center">Level 1</th>
+                          <th className="p-3 text-center">Level 2</th>
+                          <th className="p-3 text-center">Level 3</th>
+                          <th className="p-3 text-right">Program Aggregate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-sans">
+                        {(["CMT", "CFA", "CFP", "FRM"] as const).map((c) => {
+                          const l1Attempts = activeAttemptsPool.filter((a) => a.cert === c && a.level === "Level 1");
+                          const l2Attempts = activeAttemptsPool.filter((a) => a.cert === c && a.level === "Level 2");
+                          const l3Attempts = activeAttemptsPool.filter((a) => a.cert === c && a.level === "Level 3");
+                          
+                          const calcAcc = (arr: typeof activeAttemptsPool) => {
+                            if (arr.length === 0) return { acc: 0, text: "0 runs" };
+                            const corr = arr.filter((a) => a.isCorrect).length;
+                            return { acc: Math.round((corr / arr.length) * 100), text: `${arr.length} runs` };
+                          };
+
+                          const l1 = calcAcc(l1Attempts);
+                          const l2 = calcAcc(l2Attempts);
+                          const l3 = calcAcc(l3Attempts);
+
+                          const progAll = activeAttemptsPool.filter((a) => a.cert === c);
+                          const progAcc = calcAcc(progAll);
+
+                          return (
+                            <tr key={c} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-3 font-extrabold text-slate-900 font-mono">{c} Curriculum</td>
+                              
+                              <td className="p-3 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                                  l1Attempts.length === 0 ? "bg-slate-100 text-slate-400" : l1.acc >= 70 ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"
+                                }`}>
+                                  {l1.acc}% ({l1.text})
+                                </span>
+                              </td>
+
+                              <td className="p-3 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                                  l2Attempts.length === 0 ? "bg-slate-100 text-slate-400" : l2.acc >= 70 ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"
+                                }`}>
+                                  {l2.acc}% ({l2.text})
+                                </span>
+                              </td>
+
+                              <td className="p-3 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-bold ${
+                                  l3Attempts.length === 0 ? "bg-slate-100 text-slate-400" : l3.acc >= 70 ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"
+                                }`}>
+                                  {l3.acc}% ({l3.text})
+                                </span>
+                              </td>
+
+                              <td className="p-3 text-right">
+                                <span className="font-extrabold text-slate-800 font-mono">{progAcc.acc}%</span>
+                                <span className="text-[9px] text-slate-400 block font-mono">{progAll.length} total runs</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 2. Diurnal Time-Block vs Program Cross-Analysis */}
+                <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Diurnal Peak Rhythm vs. Certification Preference</h4>
+                      <p className="text-[10px] text-slate-500 font-medium">Cross-sectional analysis of study times mapped against target exams.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    {(["Morning (06:00-12:00)", "Afternoon (12:00-18:00)", "Evening (18:00-00:00)", "Night (00:00-06:00)"] as const).map((blockLabel, idx) => {
+                      const hourRanges = [
+                        [6, 7, 8, 9, 10, 11],
+                        [12, 13, 14, 15, 16, 17],
+                        [18, 19, 20, 21, 22, 23],
+                        [0, 1, 2, 3, 4, 5]
+                      ][idx];
+
+                      const blockAttempts = activeAttemptsPool.filter((a) => hourRanges.includes(new Date(a.timestamp).getHours()));
+
+                      return (
+                        <div key={blockLabel} className="border border-slate-100 bg-slate-50/40 rounded-xl p-3 space-y-2">
+                          <div className="font-bold text-slate-800 text-[11px] pb-1 border-b border-slate-150">{blockLabel}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">Total Runs: <span className="font-bold text-slate-800">{blockAttempts.length}</span></div>
+                          
+                          <div className="space-y-1 text-[10px]">
+                            {(["CMT", "CFA", "CFP", "FRM"] as const).map((certName) => {
+                              const certInBlock = blockAttempts.filter((a) => a.cert === certName);
+                              return (
+                                <div key={certName} className="flex justify-between items-center">
+                                  <span className="text-slate-500 font-mono">{certName}:</span>
+                                  <span className="font-bold text-slate-700 font-mono">{certInBlock.length} attempts</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {cohortTab === "telemetry" && isAdmin && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* 1. Metric Overview Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Students</span>
+                    <span className="text-xl font-extrabold text-slate-800">{students.length}</span>
+                    <span className="text-[9px] text-slate-400 block mt-1">registered roster</span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Active Logins</span>
+                    <span className="text-xl font-extrabold text-slate-800">
+                      {new Set(telemetryEvents.filter(e => e.eventType === "login").map(e => e.studentEmail)).size}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-1">unique accounts</span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Interactive Clicks</span>
+                    <span className="text-xl font-extrabold text-slate-800">
+                      {telemetryEvents.filter(e => e.eventType === "page_click" || e.eventType === "button_click").length}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-1">navigation & filters</span>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Exam Runs Done</span>
+                    <span className="text-xl font-extrabold text-slate-800">
+                      {telemetryEvents.filter(e => e.eventType === "practice_attempt").length}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-1">MCQ questions answered</span>
+                  </div>
+                </div>
+
+                {/* 2. Student Dropout & Inactivity Analysis */}
+                <div className="border border-slate-150 rounded-2xl overflow-hidden bg-white p-5 space-y-4 shadow-xs">
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">Student Session Dropout & Abandonment Tracker</h4>
+                    <p className="text-[10px] text-slate-500 font-semibold">Real-time trace of the exact test, level, and screen where students were last active before dropping out.</p>
+                  </div>
+                  
+                  {students.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center py-4">No students registered yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-400 font-bold uppercase text-[9px] border-b border-slate-100">
+                            <th className="p-3">Student Name / Email</th>
+                            <th className="p-3">Last Active Step (Dropout Point)</th>
+                            <th className="p-3">Target Exam Context</th>
+                            <th className="p-3 text-right">Last Interaction Time</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {students.map((student) => {
+                            // Find all telemetry events for this student
+                            const studentEvents = telemetryEvents
+                              .filter(e => e.studentEmail?.toLowerCase() === student.email?.toLowerCase())
+                              .sort((a, b) => b.timestamp - a.timestamp);
+                            
+                            const lastEvent = studentEvents[0];
+                            const lastAttempt = studentEvents.find(e => e.eventType === "practice_attempt");
+                            
+                            let lastStep = "Signed up, no navigation yet";
+                            let lastContext = "Not selected yet";
+                            let lastTimeStr = "Never";
+                            
+                            if (lastEvent) {
+                              lastStep = lastEvent.eventTarget;
+                              if (lastEvent.eventType === "practice_attempt") {
+                                lastStep = `Answered Question (${lastEvent.metadata?.category || "Practice Arena"})`;
+                              }
+                              if (lastEvent.metadata?.cert) {
+                                lastContext = `${lastEvent.metadata.cert} ${lastEvent.metadata.level || ""}`;
+                              } else if (lastAttempt && lastAttempt.metadata?.cert) {
+                                lastContext = `${lastAttempt.metadata.cert} ${lastAttempt.metadata.level || ""}`;
+                              }
+                              
+                              lastTimeStr = new Date(lastEvent.timestamp).toLocaleString();
+                            }
+                            
+                            return (
+                              <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="p-3">
+                                  <div className="font-bold text-slate-800">{student.name}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono select-all">{student.email}</div>
+                                </td>
+                                <td className="p-3 font-medium text-slate-600">
+                                  <span className="bg-slate-100 px-2 py-1 rounded text-[10px] text-slate-700 max-w-[280px] inline-block truncate">
+                                    {lastStep}
+                                  </span>
+                                </td>
+                                <td className="p-3 font-mono font-bold text-blue-700">{lastContext}</td>
+                                <td className="p-3 text-right text-slate-500 font-mono text-[10px]">{lastTimeStr}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Detailed Telemetry Events Log */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs">Live Interaction Event Feed</h4>
+                      <p className="text-[10px] text-slate-500 font-medium font-sans">Every button clicked, tab selected, and login recorded in raw chronological feed.</p>
+                    </div>
+                    {telemetryEvents.length > 0 && (
+                      <button
+                        onClick={async () => {
+                          if (window.confirm("Are you sure you want to clear the entire click telemetry history?")) {
+                            try {
+                              const res = await fetch("/api/admin/clear-all-telemetry", {
+                                method: "POST",
+                                headers: { "Authorization": `Bearer ${adminToken}` }
+                              });
+                              if (res.ok) {
+                                setTelemetryEvents([]);
+                                alert("Telemetry cleared successfully.");
+                              }
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }
+                        }}
+                        className="text-[10px] text-rose-600 hover:text-rose-800 font-bold uppercase tracking-wider bg-rose-50 px-2.5 py-1 rounded border border-rose-100 cursor-pointer"
+                      >
+                        Clear Feed Logs
+                      </button>
                     )}
                   </div>
-                );
-              })}
-            </div>
+
+                  {telemetryEvents.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic text-center py-6">No real-time user action clicks logged yet.</p>
+                  ) : (
+                    <div className="border border-slate-100 rounded-2xl overflow-hidden bg-white max-h-[300px] overflow-y-auto shadow-xs">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-400 font-bold uppercase text-[9px] border-b border-slate-100 sticky top-0 z-10">
+                            <th className="p-3">Learner</th>
+                            <th className="p-3">Action Type</th>
+                            <th className="p-3">Target Component / Button</th>
+                            <th className="p-3 text-right">Recorded At</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-sans">
+                          {telemetryEvents.slice(0, 50).map((event) => (
+                            <tr key={event.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="p-3">
+                                <span className="font-bold text-slate-700">{event.studentName}</span>
+                                <span className="text-[9px] text-slate-400 block font-mono">{event.studentEmail}</span>
+                              </td>
+                              <td className="p-3">
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${
+                                  event.eventType === "login" 
+                                    ? "bg-amber-100 text-amber-800" 
+                                    : event.eventType === "page_click"
+                                    ? "bg-purple-100 text-purple-800"
+                                    : event.eventType === "practice_attempt"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-blue-100 text-blue-800"
+                                }`}>
+                                  {event.eventType.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="p-3 text-slate-600 font-medium truncate max-w-[240px]" title={event.eventTarget}>
+                                {event.eventTarget}
+                              </td>
+                              <td className="p-3 text-right text-slate-400 font-mono text-[10px]">
+                                {new Date(event.timestamp).toLocaleTimeString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Detailed Attempts Log / Review Panel (Student-only view) */}
+          {!isAdmin && (
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+              <h3 className="font-display font-bold text-slate-900 text-sm mb-4 pb-3 border-b border-slate-100">
+                Personalized Question Review History
+              </h3>
+              
+              <div className="space-y-3" id="attempts-log-list">
+                {filteredAttempts.map((att, idx) => {
+                  const isExpanded = expandedAttemptId === att.questionId;
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`border rounded-xl transition-all ${
+                        att.isCorrect 
+                          ? "bg-emerald-50/20 border-emerald-100 hover:border-emerald-200" 
+                          : "bg-rose-50/20 border-rose-100 hover:border-rose-200"
+                      }`}
+                    >
+                      {/* Log Row Header */}
+                      <div 
+                        onClick={() => setExpandedAttemptId(isExpanded ? null : att.questionId)}
+                        className="p-3.5 flex items-center justify-between gap-4 cursor-pointer select-none"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {att.isCorrect ? (
+                            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                          ) : (
+                            <XCircle className="w-5 h-5 text-rose-500 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-800 truncate leading-snug">
+                              {att.questionText}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              {isAdmin && selectedStudentEmail === "ALL_STUDENTS" && att.studentName && (
+                                <span className="text-[9px] font-bold text-slate-700 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-sm">
+                                  👤 {att.studentName}
+                                </span>
+                              )}
+                              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-sm">
+                                {att.cert} • {att.level}
+                              </span>
+                              <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-sm">
+                                {att.category}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-medium flex items-center gap-1 font-mono">
+                                <Calendar className="w-3 h-3" />
+                                {new Date(att.timestamp).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
+                            att.isCorrect ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                          }`}>
+                            {att.isCorrect ? "CORRECT" : "MISTAKE"}
+                          </span>
+                          {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                        </div>
+                      </div>
+
+                      {/* Expanded details containing rationales and answers */}
+                      {isExpanded && (
+                        <div className="p-4 border-t border-slate-100 bg-white/50 rounded-b-xl space-y-4 text-xs">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Question Text</span>
+                            <p className="font-semibold text-slate-800 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              {att.questionText}
+                            </p>
+                          </div>
+
+                          {/* Selected vs Correct Comparison */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                            <div className="bg-rose-50/50 border border-rose-100/50 p-3 rounded-xl">
+                              <span className="text-[10px] font-bold text-rose-700 block uppercase tracking-wider mb-1">Your Selection</span>
+                              <p className="font-bold text-rose-900">
+                                Option {String.fromCharCode(65 + att.selectedIndex)}
+                              </p>
+                            </div>
+                            <div className="bg-emerald-50/50 border border-emerald-100/50 p-3 rounded-xl">
+                              <span className="text-[10px] font-bold text-emerald-700 block uppercase tracking-wider mb-1">Correct Answer</span>
+                              <p className="font-bold text-emerald-900">
+                                Option {String.fromCharCode(65 + att.correctIndex)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Complete pedagogical explanation fallback */}
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pedagogical Review Rationale</span>
+                            <div className="bg-blue-50/30 border border-blue-100/40 p-4 rounded-xl text-slate-700 leading-relaxed">
+                              {attempts.find((a) => a.questionId === att.questionId)?.questionId ? (
+                                <p>Please refer to the curriculum explanation provided on the active MCQ list card.</p>
+                              ) : null}
+                              <p className="italic">Textbook reference criteria verified by Gemini's dynamic feedback engine.</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

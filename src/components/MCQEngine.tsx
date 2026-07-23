@@ -6,6 +6,97 @@ import {
 } from "lucide-react";
 import { CertType, CertLevel, Question } from "../types";
 
+const OFFICIAL_SUBJECTS: Record<string, string[]> = {
+  "CMT-Level 1": [
+    "Theory and History of Technical Analysis",
+    "Markets",
+    "Market Indicators",
+    "Chart Construction & Pattern Analysis",
+    "Trend Analysis",
+    "Ethics & Trading Systems"
+  ],
+  "CMT-Level 2": [
+    "Theory and History",
+    "Market Indicators",
+    "Chart Construction & Trend Analysis",
+    "Multi-factor Valuation & Risk Management",
+    "Advanced Chart Patterns & Quantitative TA",
+    "Statistical Analysis and Systems Testing"
+  ],
+  "CMT-Level 3": [
+    "System Testing & Asset Allocation",
+    "Technical Strategies & Portfolio Integration",
+    "Behavioral Finance & Market Psychology",
+    "Risk Management in Technical Systems"
+  ],
+  "CFA-Level 1": [
+    "Ethical and Professional Standards",
+    "Quantitative Methods",
+    "Economics",
+    "Financial Statement Analysis",
+    "Corporate Issuers",
+    "Equity Investments",
+    "Fixed Income",
+    "Derivatives",
+    "Alternative Investments",
+    "Portfolio Management and Wealth Planning"
+  ],
+  "CFA-Level 2": [
+    "Ethical and Professional Standards",
+    "Quantitative Methods",
+    "Economics",
+    "Financial Statement Analysis",
+    "Corporate Issuers",
+    "Equity Investments",
+    "Fixed Income",
+    "Derivatives",
+    "Alternative Investments",
+    "Portfolio Management and Wealth Planning"
+  ],
+  "CFA-Level 3": [
+    "Ethical and Professional Standards",
+    "Asset Allocation & Portfolio Construction",
+    "Fixed Income & Equity Portfolio Management",
+    "Alternative Investments & Wealth Planning",
+    "Trading, Performance Evaluation, and Manager Selection"
+  ],
+  "CFP-Level 1": [
+    "Professional Conduct and Regulation",
+    "General Financial Planning Principles",
+    "Risk Management and Insurance Planning",
+    "Investment Planning"
+  ],
+  "CFP-Level 2": [
+    "Tax Planning",
+    "Retirement Savings and Income Planning",
+    "Estate Planning"
+  ],
+  "CFP-Level 3": [
+    "Financial Plan Development (Capstone)",
+    "Psychology of Financial Planning"
+  ],
+  "FRM-Level 1": [
+    "Foundations of Risk Management",
+    "Quantitative Analysis",
+    "Financial Markets and Products",
+    "Valuation and Risk Models"
+  ],
+  "FRM-Level 2": [
+    "Market Risk Measurement & Management",
+    "Credit Risk Measurement & Management",
+    "Operational Risk & Resiliency",
+    "Liquidity and Treasury Risk Measurement",
+    "Risk Management and Investment Management",
+    "Current Issues in Financial Markets"
+  ],
+  "FRM-Level 3": [
+    "Macroprudential Stress Testing",
+    "Capital Adequacy & Basel IV Standards",
+    "Systemic Risk & Liquidity Squeezes",
+    "CRO Risk Case Studies & Governance"
+  ]
+};
+
 interface MCQEngineProps {
   cert: CertType;
   level: CertLevel;
@@ -13,6 +104,9 @@ interface MCQEngineProps {
   onAddGeneratedQuestions: (questions: Question[]) => void;
   onClearQuestionsByContext: (cert: CertType, level: CertLevel) => void;
   onAddScore: (isCorrect: boolean, question: Question, selectedIndex: number) => void;
+  isAdmin?: boolean;
+  isPaid?: boolean;
+  onUpgradeTrigger?: () => void;
 }
 
 export default function MCQEngine({
@@ -22,28 +116,33 @@ export default function MCQEngine({
   onAddGeneratedQuestions,
   onClearQuestionsByContext,
   onAddScore,
+  isAdmin = false,
+  isPaid = false,
+  onUpgradeTrigger,
 }: MCQEngineProps) {
   // State for Generation Form
   const [generateCount, setGenerateCount] = useState(5);
   const [generateTopic, setGenerateTopic] = useState("");
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
-
+  const [genWarning, setGenWarning] = useState<string | null>(null);
+ 
   // Filter States
   const [filterType, setFilterType] = useState<"all" | "ai" | "custom">("all");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-
+ 
   // Quiz Navigation States
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<{ [questionId: string]: number }>({});
   const [showResults, setShowResults] = useState(false);
-
+ 
   // Reset quiz state when cert or level changes
   useEffect(() => {
     setCurrentIndex(0);
     setSelectedAnswers({});
     setShowResults(false);
     setGenError(null);
+    setGenWarning(null);
   }, [cert, level]);
 
   // Filter the questions based on active cert, level, filterType, and category
@@ -55,25 +154,38 @@ export default function MCQEngine({
     return true;
   });
 
-  // Unique categories list for filters
-  const categories = Array.from(
-    new Set(allQuestions.filter((q) => q.cert === cert && q.level === level).map((q) => q.category))
-  );
+  // Unique categories list for filters - combine official subjects + current pool categories
+  const certKey = `${cert}-${level}`;
+  const officialList = OFFICIAL_SUBJECTS[certKey] || [];
+  const activeQuestionsCats = allQuestions
+    .filter((q) => q.cert === cert && q.level === level)
+    .map((q) => q.category);
+  const categories = Array.from(new Set([...officialList, ...activeQuestionsCats])).sort();
 
   const activeQuestion = filteredQuestions[currentIndex];
 
-  // Trigger Gemini dynamic generation
+  // Trigger dynamic AI generation
   const handleGenerate = async () => {
+    if (!isPaid && !isAdmin) {
+      if (onUpgradeTrigger) {
+        onUpgradeTrigger();
+      } else {
+        alert("Please upgrade your student account to premium to use the dynamic AI MCQ generator.");
+      }
+      return;
+    }
     setGenerating(true);
     setGenError(null);
+    setGenWarning(null);
     try {
+      const topicToGenerate = generateTopic.trim() || (selectedCategory !== "all" ? selectedCategory : undefined);
       const response = await fetch("/api/generate-questions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cert,
           level,
-          topic: generateTopic.trim() || undefined,
+          topic: topicToGenerate,
           count: generateCount,
         }),
       });
@@ -86,6 +198,9 @@ export default function MCQEngine({
       const data = await response.json();
       if (data.questions && data.questions.length > 0) {
         onAddGeneratedQuestions(data.questions);
+        if (data.isFallback && data.message) {
+          setGenWarning(data.message);
+        }
         setGenerateTopic(""); // reset topic filter
         setCurrentIndex(0);
         setSelectedAnswers({});
@@ -146,7 +261,11 @@ export default function MCQEngine({
               <Sparkles className="w-4 h-4 text-blue-600 fill-blue-600 animate-pulse" />
               AI MCQ Question Generator
             </h3>
-            <span className="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider">Gemini 3.5 Flash</span>
+            {(!isPaid && !isAdmin) ? (
+              <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">Premium Required</span>
+            ) : (
+              <span className="text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider">Enterprise AI Engine</span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -185,10 +304,23 @@ export default function MCQEngine({
               id="btn-trigger-generation"
               onClick={handleGenerate}
               disabled={generating}
-              className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-100 transition-all disabled:opacity-50 shrink-0 cursor-pointer"
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold shadow-md transition-all shrink-0 cursor-pointer ${
+                (!isPaid && !isAdmin)
+                  ? "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-amber-100"
+                  : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100 disabled:opacity-50"
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />
-              {generating ? "Generating..." : "Generate MCQs"}
+              {(!isPaid && !isAdmin) ? (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 fill-amber-300 text-amber-300 animate-pulse" />
+                  Upgrade to Generate (₹99)
+                </>
+              ) : (
+                <>
+                  <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />
+                  {generating ? "Generating..." : "Generate MCQs"}
+                </>
+              )}
             </button>
           </div>
 
@@ -197,6 +329,15 @@ export default function MCQEngine({
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div className="text-[11px] leading-relaxed">
                 <strong>Generation Error:</strong> {genError}
+              </div>
+            </div>
+          )}
+
+          {genWarning && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex items-start gap-2.5 text-amber-800" id="gen-warning-banner">
+              <Sparkles className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5 fill-amber-200 animate-pulse" />
+              <div className="text-[11px] leading-relaxed">
+                <strong>Syllabus Delivery Alert:</strong> {genWarning}
               </div>
             </div>
           )}
@@ -226,7 +367,7 @@ export default function MCQEngine({
                       filterType === t ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"
                     }`}
                   >
-                    {t === "all" ? "All" : t === "ai" ? "Gemini" : "Custom"}
+                    {t === "all" ? "All" : t === "ai" ? "AI Engine" : "Custom"}
                   </button>
                 ))}
               </div>
@@ -256,7 +397,7 @@ export default function MCQEngine({
 
           <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-3 border-t border-slate-100">
             <span>Pool Size: {filteredQuestions.length} Questions</span>
-            {filteredQuestions.length > 0 && (
+            {isAdmin && filteredQuestions.length > 0 && (
               <button
                 id="btn-clear-questions"
                 onClick={handleClearContext}
@@ -280,7 +421,7 @@ export default function MCQEngine({
           <div className="space-y-1">
             <h4 className="font-display font-extrabold text-slate-900">Synthesizing Core Concepts...</h4>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Our Express engine is securely contacting Google Gemini to pull syllabus guides and construct challenging multiple choice items.
+              Our Express engine is securely contacting the AI Engine to pull syllabus guides and construct challenging multiple choice items.
             </p>
           </div>
           <div className="inline-flex gap-1.5 text-[10px] font-mono text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1">
@@ -293,14 +434,18 @@ export default function MCQEngine({
           <BookOpen className="w-12 h-12 text-slate-400 mx-auto mb-3" />
           <h4 className="font-display font-extrabold text-slate-900 text-base">Study Pool Empty</h4>
           <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 leading-relaxed">
-            There are currently no MCQ questions for {cert} {level} in the active filter. Tap "Generate MCQs" above to build a fresh, high-quality exam batch!
+            {selectedCategory !== "all"
+              ? `There are currently no custom or loaded practice questions in the subject "${selectedCategory}". Tap below to automatically generate a fresh batch of tailored exam items!`
+              : `There are currently no MCQ questions for ${cert} ${level} in the active filter. Tap "Generate MCQs" above to build a fresh, high-quality exam batch!`
+            }
           </p>
           <div className="mt-5 flex justify-center gap-3">
             <button
               onClick={handleGenerate}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-100 transition-all cursor-pointer"
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-100 transition-all cursor-pointer flex items-center gap-2"
             >
-              Generate 5 Practice Questions
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+              Generate Questions on {selectedCategory !== "all" ? `"${selectedCategory}"` : "this level"}
             </button>
           </div>
         </div>
