@@ -1,5 +1,5 @@
-import { BookOpen, HelpCircle, PlusCircle, Award, CheckCircle2, BarChart3 } from "lucide-react";
-import { CertType, CertLevel } from "../types";
+import { BookOpen, HelpCircle, PlusCircle, Award, CheckCircle2, BarChart3, ShieldCheck } from "lucide-react";
+import { CertType, CertLevel, StudentInfo } from "../types";
 import Logo from "./Logo";
 
 interface NavbarProps {
@@ -12,7 +12,7 @@ interface NavbarProps {
   questionCount: number;
   score: { correct: number; total: number };
   isAdmin: boolean;
-  studentInfo: { name: string; email: string; phone: string } | null;
+  studentInfo: StudentInfo | null;
   onStudentLogout: () => void;
 }
 
@@ -94,81 +94,137 @@ export default function Navbar({
       {/* Primary Sub-Navigation Segmented Tabs */}
       <div className="max-w-6xl mx-auto px-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
         <nav className="flex gap-1 py-1" id="nav-tabs">
-          <button
-            id="tab-practice"
-            onClick={() => setActiveTab("practice")}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
-              activeTab === "practice"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <HelpCircle className="w-4 h-4" />
-            Practice Arena
-            <span className="bg-slate-200/60 text-slate-700 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold">
-              {questionCount}
-            </span>
-          </button>
+          {isAdmin ? (
+            <>
+              <button
+                id="tab-custom"
+                onClick={() => setActiveTab("custom")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "custom"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <PlusCircle className="w-4 h-4 text-amber-500" />
+                Admin Q&A Management
+              </button>
 
-          <button
-            id="tab-syllabus"
-            onClick={() => setActiveTab("syllabus")}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
-              activeTab === "syllabus"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            Syllabus Explorer
-          </button>
+              <button
+                id="tab-analytics"
+                onClick={() => setActiveTab("analytics")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "analytics"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 text-emerald-500" />
+                Admin Data Analytics
+              </button>
 
-          <button
-            id="tab-analytics"
-            onClick={() => setActiveTab("analytics")}
-            className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
-              activeTab === "analytics"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-emerald-500" />
-            Performance Analytics
-          </button>
+              <button
+                id="tab-syllabus"
+                onClick={() => setActiveTab("syllabus")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "syllabus"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                Syllabus Explorer
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                id="tab-practice"
+                onClick={() => setActiveTab("practice")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "practice"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <HelpCircle className="w-4 h-4" />
+                Practice Arena
+                <span className="bg-slate-200/60 text-slate-700 px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold">
+                  {questionCount}
+                </span>
+              </button>
 
-          {isAdmin && (
-            <button
-              id="tab-custom"
-              onClick={() => setActiveTab("custom")}
-              className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
-                activeTab === "custom"
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <PlusCircle className="w-4 h-4 text-amber-500" />
-              Add Custom MCQ (Admin)
-            </button>
+              <button
+                id="tab-syllabus"
+                onClick={() => setActiveTab("syllabus")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "syllabus"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                Syllabus Explorer
+              </button>
+
+              <button
+                id="tab-analytics"
+                onClick={() => setActiveTab("analytics")}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-bold border-b-2 transition-all ${
+                  activeTab === "analytics"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 text-emerald-500" />
+                Performance Analytics
+              </button>
+            </>
           )}
         </nav>
 
         {/* Student details and Sign Out or fallback to cert */}
         <div className="flex items-center gap-3 py-1.5 sm:py-0">
-          {studentInfo && (
-            <div className="flex items-center gap-2 bg-blue-50/75 border border-blue-100 rounded-xl px-3 py-1 text-xs" id="navbar-student-badge">
-              <div className="flex flex-col items-end">
-                <span className="font-bold text-slate-700 text-[10px] sm:text-xs">👤 {studentInfo.name}</span>
-                <span className="text-[9px] text-slate-500 font-mono hidden md:inline">{studentInfo.email}</span>
+          {studentInfo && (() => {
+            const endsAt = studentInfo.subscriptionEndsAt;
+            const daysLeft = endsAt 
+              ? Math.max(0, Math.ceil((endsAt - Date.now()) / (1000 * 60 * 60 * 24)))
+              : 364;
+            const expiryFormatted = endsAt
+              ? new Date(endsAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+              : "364 Days";
+
+            return (
+              <div className="flex items-center gap-2.5 bg-blue-50/90 border border-blue-100 rounded-xl px-3 py-1.5 text-xs shadow-2xs" id="navbar-student-badge">
+                <div className="flex flex-col items-end">
+                  <div className="flex items-center gap-1.5">
+                    {studentInfo.isPaid && (
+                      <span 
+                        className="bg-emerald-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-2xs cursor-help"
+                        title={`Subscription expires on ${expiryFormatted} (${daysLeft} days remaining)`}
+                      >
+                        <ShieldCheck className="w-2.5 h-2.5" />
+                        Premium • {daysLeft}d left
+                      </span>
+                    )}
+                    <span className="font-bold text-slate-800 text-[10px] sm:text-xs">👤 {studentInfo.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] text-slate-500 font-mono">
+                    <span className="hidden md:inline">{studentInfo.email}</span>
+                    <span className="text-blue-700 font-semibold bg-blue-100/80 px-1 rounded text-[8.5px]">
+                      Limit Ends: {expiryFormatted}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={onStudentLogout}
+                  className="bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 font-bold text-[10px] px-2 py-1 border border-slate-200 hover:border-rose-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                  id="btn-student-logout"
+                >
+                  Sign Out
+                </button>
               </div>
-              <button
-                onClick={onStudentLogout}
-                className="bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 font-bold text-[10px] px-2 py-0.5 border border-slate-200 hover:border-rose-200 rounded-lg transition-colors cursor-pointer shrink-0"
-                id="btn-student-logout"
-              >
-                Sign Out
-              </button>
-            </div>
-          )}
+            );
+          })()}
           <div className="text-[10px] font-mono text-slate-400 uppercase font-bold tracking-wider hidden sm:block">
             {selectedCert} • {selectedLevel}
           </div>

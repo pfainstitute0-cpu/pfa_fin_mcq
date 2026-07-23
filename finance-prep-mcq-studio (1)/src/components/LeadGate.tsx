@@ -1,35 +1,88 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   GraduationCap, ArrowRight, User, Mail, Phone, Lock, Sparkles, CheckCircle, 
-  BookOpen, Award, TrendingUp, KeyRound, Sparkle, ShieldCheck, HeartPulse
+  BookOpen, Award, TrendingUp, KeyRound, Sparkle, ShieldCheck, HeartPulse,
+  QrCode, Smartphone, Copy, Check, Loader2, X, Hash, AlertTriangle
 } from "lucide-react";
 import Logo from "./Logo";
+import RazorpayQrPoster from "./RazorpayQrPoster";
 
 interface LeadGateProps {
-  onUnlock: (student: { name: string; email: string; phone: string }) => void;
+  initialStudent?: { name: string; email: string; phone: string; isPaid?: boolean; subscriptionEndsAt?: number } | null;
+  onUnlock: (student: { name: string; email: string; phone: string; isPaid?: boolean; subscriptionEndsAt?: number }) => void;
   onAdminTrigger?: () => void;
+  onLogout?: () => void;
 }
 
-export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
+export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onLogout }: LeadGateProps) {
   const [isLoginMode, setIsLoginMode] = useState(false);
   const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
-  const [verificationStep, setVerificationStep] = useState<'form' | 'otp'>('form');
+  const [verificationStep, setVerificationStep] = useState<'form' | 'otp' | 'payment'>(
+    initialStudent && !initialStudent.isPaid ? 'payment' : 'form'
+  );
   const [sentOtpType, setSentOtpType] = useState<'register' | 'forgot-password' | null>(null);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
+  const [name, setName] = useState(initialStudent?.name || "");
+  const [email, setEmail] = useState(initialStudent?.email || "");
+  const [phone, setPhone] = useState(initialStudent?.phone || "");
   const [password, setPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    initialStudent && !initialStudent.isPaid 
+      ? "Your PFA student license is inactive or has expired. A compulsory subscription fee of ₹99 is required to enter your workspace." 
+      : null
+  );
   const [success, setSuccess] = useState(false);
   const [devOtpAlert, setDevOtpAlert] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [verifyingPayment, setVerifyingPayment] = useState(false);
+  const [utr, setUtr] = useState("");
+
+  const upiId = "pfainstitute0@okaxis";
+  const amount = "99";
+
+  const [existingAccountNotice, setExistingAccountNotice] = useState<string | null>(null);
+
+  // Auto transition to payment if initialStudent changes and is unpaid
+  useEffect(() => {
+    if (initialStudent && !initialStudent.isPaid) {
+      setName(initialStudent.name);
+      setEmail(initialStudent.email);
+      setPhone(initialStudent.phone);
+      setVerificationStep('payment');
+      setError("Your PFA student license is inactive or has expired. A compulsory subscription fee of ₹99 is required to enter your workspace.");
+    }
+  }, [initialStudent]);
+
+  // Check if email already exists in records while typing/blurring registration email
+  const checkEmailExists = async (emailToCheck: string) => {
+    if (!emailToCheck || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailToCheck.trim())) {
+      setExistingAccountNotice(null);
+      return;
+    }
+    try {
+      const response = await fetch("/api/check-email-exists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailToCheck.trim() }),
+      });
+      const data = await response.json();
+      if (data.exists) {
+        setExistingAccountNotice(data.message || `User ID (${emailToCheck.trim()}) already exists in records.`);
+      } else {
+        setExistingAccountNotice(null);
+      }
+    } catch (err) {
+      // Silent check
+    }
+  };
 
   // Send verification OTP code via nodemailer/SMTP (or dev fallback)
   const handleSendOtp = async (type: 'register' | 'forgot-password') => {
     setError(null);
     setDevOtpAlert(null);
+    setExistingAccountNotice(null);
     const targetEmail = email.trim().toLowerCase();
 
     if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
@@ -72,6 +125,9 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
           setDevOtpAlert(data.devOtp);
         }
       } else {
+        if (data.alreadyRegistered) {
+          setExistingAccountNotice(data.error);
+        }
         setError(data.error || "Failed to send verification code. Please check your email and try again.");
       }
     } catch (err) {
@@ -79,6 +135,120 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
       setError("Network connection issue. Failed to request security code from the server.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Automatic live payment listener while on the QR code view
+  useEffect(() => {
+    if (verificationStep !== 'payment' || !email) return;
+
+    let isMounted = true;
+    const checkPaymentStatus = async () => {
+      try {
+        const response = await fetch("/api/student/check-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        });
+        const data = await response.json();
+        if (isMounted && response.ok && data.isPaid) {
+          setSuccess(true);
+          setTimeout(() => {
+            onUnlock({
+              name: data.student.name || name,
+              email: data.student.email || email,
+              phone: data.student.phone || phone,
+              isPaid: true,
+              subscriptionEndsAt: data.student.subscriptionEndsAt
+            });
+          }, 1000);
+        }
+      } catch (err) {
+        // Silent polling catch
+      }
+    };
+
+    checkPaymentStatus();
+    const interval = setInterval(checkPaymentStatus, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [verificationStep, email]);
+
+  // Automatic Instant Payment Verification (Post QR Scan)
+  const handleAutoVerifyPayment = async () => {
+    setError(null);
+    setVerifyingPayment(true);
+    try {
+      const response = await fetch("/api/student/auto-verify-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSuccess(true);
+        setTimeout(() => {
+          onUnlock({
+            name: data.student.name,
+            email: data.student.email,
+            phone: data.student.phone,
+            isPaid: true,
+            subscriptionEndsAt: data.student.subscriptionEndsAt
+          });
+        }, 1000);
+      } else {
+        setError(data.error || "Automatic gateway verification failed. Please try again.");
+      }
+    } catch (err) {
+      console.error("Auto payment verification error:", err);
+      setError("Network error communicating with payment verification server.");
+    } finally {
+      setVerifyingPayment(false);
+    }
+  };
+
+  // Verify compulsory registration or renewal payment via 12-digit UPI UTR
+  const handleVerifyRegistrationPayment = async () => {
+    setError(null);
+    const cleanUtr = utr.trim();
+
+    if (!cleanUtr || cleanUtr.length < 8) {
+      setError("⚠️ Payment verification requires your 12-digit UPI Transaction Ref ID / UTR Number from Google Pay, PhonePe, or Paytm receipt.");
+      return;
+    }
+
+    setVerifyingPayment(true);
+    try {
+      const response = await fetch("/api/student/submit-utr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), utr: cleanUtr }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setSuccess(true);
+        setTimeout(() => {
+          onUnlock({
+            name: data.student.name,
+            email: data.student.email,
+            phone: data.student.phone,
+            isPaid: true,
+            subscriptionEndsAt: data.student.subscriptionEndsAt
+          });
+        }, 1200);
+      } else {
+        setError(data.error || "Verification failed. Please double check your 12-digit UPI UTR Number.");
+      }
+    } catch (err) {
+      console.error("Payment verification failed:", err);
+      setError("Failed to connect with payment verification server. Please verify your internet connection.");
+    } finally {
+      setVerifyingPayment(false);
     }
   };
 
@@ -110,12 +280,24 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.student) {
+          // Check payment status
+          if (!data.student.isPaid && data.student.email.trim().toLowerCase() !== "pfainstitute0@gmail.com") {
+            // Unpaid or subscription expired! Show compulsory payment
+            setEmail(data.student.email);
+            setName(data.student.name);
+            setPhone(data.student.phone || "");
+            setVerificationStep('payment');
+            setError("Your student license is inactive or has expired. A compulsory ₹99 subscription payment is required to proceed.");
+            return;
+          }
           setSuccess(true);
           setTimeout(() => {
             onUnlock({
               name: data.student.name,
               email: data.student.email,
               phone: data.student.phone,
+              isPaid: true,
+              subscriptionEndsAt: data.student.subscriptionEndsAt
             });
           }, 1200);
         } else {
@@ -127,14 +309,9 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
       }
     } catch (err) {
       console.warn("Returning student lookup failed. Activating local bypass:", err);
-      setSuccess(true);
-      setTimeout(() => {
-        onUnlock({
-          name: trimmedEmail.split("@")[0].toUpperCase(),
-          email: trimmedEmail,
-          phone: trimmedPassword || "+91 99999 99999",
-        });
-      }, 1200);
+      // For fallback bypass: since they are offline, still ask for payment to satisfy 'compulsory' rule
+      setVerificationStep('payment');
+      setError("Local workspace check triggered. Compulsory license activation payment of ₹99 is required to proceed.");
     } finally {
       setSubmitting(false);
     }
@@ -169,21 +346,17 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
 
         const data = await response.json();
         if (response.ok && data.success) {
-          setSuccess(true);
+          // Account successfully created but unpaid. Redirect directly to compulsory payment screen!
+          setVerificationStep('payment');
+          setError(null);
           setDevOtpAlert(null);
-          setTimeout(() => {
-            onUnlock({
-              name: data.student.name,
-              email: data.student.email,
-              phone: data.student.phone,
-            });
-          }, 1200);
         } else {
           setError(data.error || "Incorrect or expired verification code (OTP).");
         }
       } catch (err) {
-        console.error("OTP registration validation failed:", err);
-        setError("Network response issue. Failed to register.");
+        console.error("OTP registration validation failed, shifting to offline backup payment gate:", err);
+        setVerificationStep('payment');
+        setError("Account authenticated successfully. A compulsory premium payment of ₹99 is required to enter your active workspace.");
       } finally {
         setSubmitting(false);
       }
@@ -208,15 +381,23 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
 
         const data = await response.json();
         if (response.ok && data.success) {
-          setSuccess(true);
-          setDevOtpAlert(null);
-          setTimeout(() => {
-            onUnlock({
-              name: data.student.name,
-              email: data.student.email,
-              phone: data.student.phone,
-            });
-          }, 1200);
+          // Password reset successful! Verify payment status
+          if (!data.student.isPaid && data.student.email.trim().toLowerCase() !== "pfainstitute0@gmail.com") {
+            setVerificationStep('payment');
+            setError("Password reset successful! A compulsory premium subscription payment of ₹99 is required to activate access.");
+          } else {
+            setSuccess(true);
+            setDevOtpAlert(null);
+            setTimeout(() => {
+              onUnlock({
+                name: data.student.name,
+                email: data.student.email,
+                phone: data.student.phone,
+                isPaid: true,
+                subscriptionEndsAt: data.student.subscriptionEndsAt
+              });
+            }, 1200);
+          }
         } else {
           setError(data.error || "Incorrect or expired password reset code (OTP).");
         }
@@ -248,7 +429,7 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 PRACTICAL FINANCIAL ANALYST
               </div>
               <div className="text-[9px] sm:text-[10px] text-blue-400 font-bold uppercase tracking-widest font-mono">
-                INSTITUTE • Puratan Bharti
+                INSTITUTE • PROFESSIONAL FINANCE PREP
               </div>
             </div>
           </div>
@@ -284,10 +465,25 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
               Interactive Study Ecosystem v2.0
             </div>
             <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-white leading-[1.1] tracking-tight">
-              Master Elite <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-300 to-emerald-400">Financial Credentials</span> With Active Learning
+              Master Elite <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-teal-300 to-emerald-400">Financial Credentials</span> & Cracking Interviews
             </h1>
-            <p className="text-sm sm:text-base text-slate-400 leading-relaxed font-sans max-w-xl mx-auto lg:mx-0">
-              Welcome to the <strong>Practical Financial Analyst (PFA) Institute</strong>. Elevate your learning velocity with instant Gemini-powered MCQ generators, analytical syllabus trackers, and performance heatmaps customized for professional finance certifications.
+            
+            {/* Highly Highlighted MBA & Interview Prep callout banner */}
+            <div className="bg-gradient-to-r from-blue-600/20 via-indigo-500/10 to-transparent border-l-4 border-blue-500 p-4.5 rounded-r-2xl space-y-2 text-left" id="interview-prep-highlight">
+              <div className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Sparkle className="w-4 h-4 fill-blue-500 text-blue-500 animate-pulse" />
+                Best for Exam & Interview Prep
+              </div>
+              <p className="text-sm font-semibold text-white leading-normal">
+                Not able to clear your exam or MBA interview? Use this study ecosystem to crack it and feel confident!
+              </p>
+              <p className="text-xs text-slate-300">
+                Don't have time to read heavy textbooks? Directly attempt interactive questions powered by our custom AI engine to build rapid, high-yield retention.
+              </p>
+            </div>
+
+            <p className="text-sm text-slate-400 leading-relaxed font-sans max-w-xl mx-auto lg:mx-0 pt-2">
+              Welcome to the <strong>Practical Financial Analyst (PFA) Institute</strong>. Elevate your learning velocity with instant AI-powered MCQ generators, analytical syllabus trackers, and performance heatmaps customized for professional finance certifications.
             </p>
           </div>
 
@@ -354,22 +550,28 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 <GraduationCap className="w-6 h-6" />
               </div>
               <h2 className="font-display font-extrabold text-slate-900 text-lg tracking-tight">
-                {verificationStep === 'otp' 
-                  ? (sentOtpType === 'forgot-password' ? "Reset Your Password" : "Verify Your Email")
-                  : (isForgotPasswordMode 
-                    ? "Reset Password Request" 
-                    : (isLoginMode ? "Returning Student Login" : "Student Registration Portal")
+                {verificationStep === 'payment'
+                  ? "Required Student Payment"
+                  : (verificationStep === 'otp' 
+                    ? (sentOtpType === 'forgot-password' ? "Reset Your Password" : "Verify Your Email")
+                    : (isForgotPasswordMode 
+                      ? "Reset Password Request" 
+                      : (isLoginMode ? "Returning Student Login" : "Student Registration Portal")
+                    )
                   )
                 }
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed max-w-[280px] mx-auto">
-                {verificationStep === 'otp'
-                  ? `Enter the 6-digit secure code sent to ${email}`
-                  : (isForgotPasswordMode
-                    ? "Enter your registered email address to receive a password reset code."
-                    : (isLoginMode 
-                      ? "Enter your registered email address to instantly retrieve your active learning dashboard."
-                      : "Register with your name, Gmail, and WhatsApp number to unlock free high-fidelity study tools."
+                {verificationStep === 'payment'
+                  ? "Compulsory ₹99 license activation fee to access your Practical Financial Analyst workspace"
+                  : (verificationStep === 'otp'
+                    ? `Enter the 6-digit secure code sent to ${email}`
+                    : (isForgotPasswordMode
+                      ? "Enter your registered email address to receive a password reset code."
+                      : (isLoginMode 
+                        ? "Enter your registered email address to instantly retrieve your active learning dashboard."
+                        : "Register with your name, Gmail, and WhatsApp number to unlock premium study tools."
+                      )
                     )
                   )
                 }
@@ -385,6 +587,78 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 <p className="text-xs text-emerald-600 font-bold uppercase tracking-widest font-mono animate-pulse">
                   Assembling personalized arena...
                 </p>
+              </div>
+            ) : verificationStep === 'payment' ? (
+              /* COMPULSORY REGISTRATION PAYMENT SCREEN (Razorpay QR Code, ₹99) */
+              <div className="space-y-4 font-sans animate-in slide-in-from-bottom-2 duration-300" id="portal-payment-view">
+                {error && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs px-4 py-3 rounded-xl font-semibold leading-relaxed">
+                    ⚠️ {error}
+                  </div>
+                )}
+
+                {/* High Fidelity Razorpay QR Poster */}
+                <RazorpayQrPoster
+                  upiId={upiId}
+                  amount={amount}
+                  merchantName="PFA Institute"
+                  subText="mcq"
+                />
+
+                {/* Live Automatic Gateway Status Banner */}
+                <div className="bg-emerald-50/90 border border-emerald-200/80 rounded-2xl p-3.5 text-center space-y-1.5 shadow-2xs">
+                  <div className="flex items-center justify-center gap-2 text-xs font-black text-emerald-950">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    Automatic Payment Verification Active
+                  </div>
+                  <p className="text-[11px] text-emerald-800 font-medium leading-relaxed">
+                    Click the Razorpay button above to pay ₹99 via UPI, GPay, PhonePe, Cards, or NetBanking. Once completed, your workspace will open automatically.
+                  </p>
+                </div>
+
+                {/* Primary Auto-Verify Button */}
+                <button
+                  id="btn-auto-verify-payment"
+                  onClick={handleAutoVerifyPayment}
+                  disabled={verifyingPayment}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-100 transition-all cursor-pointer"
+                >
+                  {verifyingPayment ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      Activating 364-Day Access...
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 shrink-0" />
+                      Complete Payment & Enter Dashboard (364 Days)
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+
+                <div className="pt-1 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onLogout) {
+                        onLogout();
+                      }
+                      setVerificationStep('form');
+                      setError(null);
+                      setPassword("");
+                      setOtpCode("");
+                      setNewPassword("");
+                      setDevOtpAlert(null);
+                    }}
+                    className="text-slate-400 hover:text-slate-600 font-bold text-xs"
+                  >
+                    ← Log out / Register other email
+                  </button>
+                </div>
               </div>
             ) : verificationStep === 'otp' ? (
               /* OTP verification state */
@@ -538,6 +812,42 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                 className="space-y-4 font-sans" 
                 id="portal-student-form"
               >
+                {existingAccountNotice && !isLoginMode && !isForgotPasswordMode && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-3.5 text-xs space-y-2 animate-in slide-in-from-top-1">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      User ID / Email Already Registered!
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-amber-800">
+                      An account with <strong>{email}</strong> already exists in our records. Please sign in with your password or reset your password.
+                    </p>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsLoginMode(true);
+                          setExistingAccountNotice(null);
+                          setError(null);
+                        }}
+                        className="flex-1 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] transition-colors cursor-pointer text-center"
+                      >
+                        Sign In with Password
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsForgotPasswordMode(true);
+                          setExistingAccountNotice(null);
+                          setError(null);
+                        }}
+                        className="flex-1 py-1.5 bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-lg font-bold text-[11px] transition-colors cursor-pointer text-center"
+                      >
+                        Reset Password
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {error && (
                   <div className="bg-rose-50 border border-rose-100 text-rose-700 text-xs px-4 py-3 rounded-xl font-medium animate-in slide-in-from-top-1">
                     ⚠️ {error}
@@ -577,7 +887,17 @@ export default function LeadGate({ onUnlock, onAdminTrigger }: LeadGateProps) {
                       required
                       placeholder="rahul.sharma@gmail.com"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        if (!isLoginMode && !isForgotPasswordMode) {
+                          setExistingAccountNotice(null);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (!isLoginMode && !isForgotPasswordMode) {
+                          checkEmailExists(e.target.value);
+                        }
+                      }}
                       className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans font-semibold transition-all"
                     />
                   </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   PlusCircle, 
   HelpCircle, 
@@ -11,9 +11,107 @@ import {
   Sparkles, 
   Layers, 
   Trash2, 
-  BookOpen 
+  BookOpen,
+  Play,
+  Pause,
+  RefreshCw,
+  AlertTriangle,
+  FileCode,
+  Brain,
+  Database
 } from "lucide-react";
 import { CertType, CertLevel, Question } from "../types";
+
+const OFFICIAL_SUBJECTS: Record<string, string[]> = {
+  "CMT-Level 1": [
+    "Theory and History of Technical Analysis",
+    "Markets",
+    "Market Indicators",
+    "Chart Construction & Pattern Analysis",
+    "Trend Analysis",
+    "Ethics & Trading Systems"
+  ],
+  "CMT-Level 2": [
+    "Theory and History",
+    "Market Indicators",
+    "Chart Construction & Trend Analysis",
+    "Multi-factor Valuation & Risk Management",
+    "Advanced Chart Patterns & Quantitative TA",
+    "Statistical Analysis and Systems Testing"
+  ],
+  "CMT-Level 3": [
+    "System Testing & Asset Allocation",
+    "Technical Strategies & Portfolio Integration",
+    "Behavioral Finance & Market Psychology",
+    "Risk Management in Technical Systems"
+  ],
+  "CFA-Level 1": [
+    "Ethical and Professional Standards",
+    "Quantitative Methods",
+    "Economics",
+    "Financial Statement Analysis",
+    "Corporate Issuers",
+    "Equity Investments",
+    "Fixed Income",
+    "Derivatives",
+    "Alternative Investments",
+    "Portfolio Management and Wealth Planning"
+  ],
+  "CFA-Level 2": [
+    "Ethical and Professional Standards",
+    "Quantitative Methods",
+    "Economics",
+    "Financial Statement Analysis",
+    "Corporate Issuers",
+    "Equity Investments",
+    "Fixed Income",
+    "Derivatives",
+    "Alternative Investments",
+    "Portfolio Management and Wealth Planning"
+  ],
+  "CFA-Level 3": [
+    "Ethical and Professional Standards",
+    "Asset Allocation & Portfolio Construction",
+    "Fixed Income & Equity Portfolio Management",
+    "Alternative Investments & Wealth Planning",
+    "Trading, Performance Evaluation, and Manager Selection"
+  ],
+  "CFP-Level 1": [
+    "Professional Conduct and Regulation",
+    "General Financial Planning Principles",
+    "Risk Management and Insurance Planning",
+    "Investment Planning"
+  ],
+  "CFP-Level 2": [
+    "Tax Planning",
+    "Retirement Savings and Income Planning",
+    "Estate Planning"
+  ],
+  "CFP-Level 3": [
+    "Financial Plan Development (Capstone)",
+    "Psychology of Financial Planning"
+  ],
+  "FRM-Level 1": [
+    "Foundations of Risk Management",
+    "Quantitative Analysis",
+    "Financial Markets and Products",
+    "Valuation and Risk Models"
+  ],
+  "FRM-Level 2": [
+    "Market Risk Measurement & Management",
+    "Credit Risk Measurement & Management",
+    "Operational Risk & Resiliency",
+    "Liquidity and Treasury Risk Measurement",
+    "Risk Management and Investment Management",
+    "Current Issues in Financial Markets"
+  ],
+  "FRM-Level 3": [
+    "Macroprudential Stress Testing",
+    "Capital Adequacy & Basel IV Standards",
+    "Systemic Risk & Liquidity Squeezes",
+    "CRO Risk Case Studies & Governance"
+  ]
+};
 
 interface CustomQuestionFormProps {
   currentCert: CertType;
@@ -210,8 +308,8 @@ export default function CustomQuestionForm({
   onAddQuestion,
   onAddBatchQuestions,
 }: CustomQuestionFormProps) {
-  // Dual Tab state
-  const [activeSubTab, setActiveSubTab] = useState<"single" | "bulk">("single");
+  // Segmented Sub-Tab Navigator state
+  const [activeSubTab, setActiveSubTab] = useState<"single" | "bulk" | "factory">("single");
 
   // Single Question Form State
   const [text, setText] = useState("");
@@ -226,6 +324,22 @@ export default function CustomQuestionForm({
   const [bulkText, setBulkText] = useState("");
   const [importFormat, setImportFormat] = useState<"delimited" | "json">("delimited");
 
+  // --- Automation Factory States ---
+  const [factoryTotal, setFactoryTotal] = useState(0);
+  const [factoryStats, setFactoryStats] = useState<Record<string, number>>({});
+  const [factoryTarget, setFactoryTarget] = useState(9000);
+  const [factoryBatchSize, setFactoryBatchSize] = useState(20);
+  const [factoryActive, setFactoryActive] = useState(false);
+  const [factoryLogs, setFactoryLogs] = useState<string[]>([]);
+  const [factoryLatestQs, setFactoryLatestQs] = useState<Question[]>([]);
+  const [factoryTargetCert, setFactoryTargetCert] = useState<"ALL" | CertType>("ALL");
+  const [factoryTargetLevel, setFactoryTargetLevel] = useState<"ALL" | CertLevel>("ALL");
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  // --- AI Word Extractor States ---
+  const [wordText, setWordText] = useState("");
+  const [isParsingWord, setIsParsingWord] = useState(false);
+
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Sync state if selections change globally
@@ -233,6 +347,264 @@ export default function CustomQuestionForm({
     setCert(currentCert);
     setLevel(currentLevel);
   });
+
+  const loadStats = async () => {
+    setLoadingStats(true);
+    try {
+      const res = await fetch("/api/admin/questions-stats");
+      const data = await res.json();
+      if (data && data.success) {
+        setFactoryTotal(data.total);
+        setFactoryStats(data.stats);
+      }
+    } catch (err) {
+      console.error("Failed to load question pool statistics:", err);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  useEffect(() => {
+    loadStats();
+  }, [activeSubTab]);
+
+  const appendFactoryLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setFactoryLogs((prev) => [`[${time}] ${msg}`, ...prev].slice(0, 100));
+  };
+
+  // Automated Factory Queue Generator Loop
+  useEffect(() => {
+    let active = factoryActive;
+    if (!active) return;
+
+    const runBatch = async () => {
+      if (factoryTotal >= factoryTarget) {
+        appendFactoryLog(`🏁 PFA Automation Goal Reached! Completed with ${factoryTotal} total questions.`);
+        setFactoryActive(false);
+        return;
+      }
+
+      const certs: CertType[] = ["CFA", "CMT", "CFP", "FRM"];
+      const levels: CertLevel[] = ["Level 1", "Level 2", "Level 3"];
+
+      let targetCert: CertType = "CFA";
+      let targetLevel: CertLevel = "Level 1";
+
+      if (factoryTargetCert !== "ALL") {
+        targetCert = factoryTargetCert;
+      } else {
+        // Pick the certification with the lowest loaded count to keep the database balanced
+        let minCount = Infinity;
+        certs.forEach((c) => {
+          let cCount = 0;
+          levels.forEach((l) => {
+            cCount += factoryStats[`${c} - ${l}`] || 0;
+          });
+          if (cCount < minCount) {
+            minCount = cCount;
+            targetCert = c;
+          }
+        });
+      }
+
+      if (factoryTargetLevel !== "ALL") {
+        targetLevel = factoryTargetLevel;
+      } else {
+        // Pick the level with the lowest count
+        let minCount = Infinity;
+        levels.forEach((l) => {
+          const lCount = factoryStats[`${targetCert} - ${l}`] || 0;
+          if (lCount < minCount) {
+            minCount = lCount;
+            targetLevel = l;
+          }
+        });
+      }
+
+      appendFactoryLog(`🏭 Queue: Requesting batch of ${factoryBatchSize} questions for ${targetCert} ${targetLevel}...`);
+
+      try {
+        const certKey = `${targetCert}-${targetLevel}`;
+        const subjectsList = OFFICIAL_SUBJECTS[certKey] || ["Ethics & Professional Standards", "Quantitative Analysis", "Core Principles"];
+        const randomTopic = subjectsList[Math.floor(Math.random() * subjectsList.length)];
+
+        appendFactoryLog(`🎯 Syllabus Target: "${randomTopic}"`);
+
+        const res = await fetch("/api/generate-questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cert: targetCert,
+            level: targetLevel,
+            topic: randomTopic,
+            count: factoryBatchSize
+          })
+        });
+
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+
+        if (data && Array.isArray(data.questions) && data.questions.length > 0) {
+          const newQs = data.questions;
+          
+          // Submit to server-side batch endpoint
+          const saveRes = await fetch("/api/questions/add-batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questions: newQs })
+          });
+          const saveData = await saveRes.json();
+
+          if (saveData && saveData.success) {
+            const added = saveData.addedCount;
+            const newTotal = saveData.totalCount;
+            
+            // Update local statistics
+            setFactoryTotal(newTotal);
+            setFactoryStats((prev) => {
+              const key = `${targetCert} - ${targetLevel}`;
+              return { ...prev, [key]: (prev[key] || 0) + added };
+            });
+
+            // Sync top-level App state
+            if (onAddBatchQuestions) {
+              onAddBatchQuestions(newQs);
+            }
+
+            setFactoryLatestQs((prev) => [...newQs, ...prev].slice(0, 5));
+            appendFactoryLog(`✅ Success: Ingested ${added} new unique items. Pool size: ${newTotal}`);
+          } else {
+            throw new Error("Persist error");
+          }
+        } else {
+          throw new Error("No responses generated from Gemini");
+        }
+      } catch (err: any) {
+        appendFactoryLog(`⚠️ Rate Limit or API Alert: ${err.message || "Intermittent network failure"}`);
+        appendFactoryLog(`Auto-pausing factory to prevent API exhaustion.`);
+        setFactoryActive(false);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      if (factoryActive) {
+        runBatch();
+      }
+    }, factoryLogs.length === 0 ? 0 : 3500);
+
+    return () => clearTimeout(timer);
+  }, [factoryActive, factoryTotal, factoryStats, factoryTarget, factoryBatchSize, factoryTargetCert, factoryTargetLevel]);
+
+  // AI Word Document Copy-Paste Extractor
+  const handleParseWordAI = async () => {
+    if (!wordText.trim()) {
+      setNotification({ type: "error", message: "Please paste your Word document content first." });
+      return;
+    }
+    
+    setIsParsingWord(true);
+    setNotification(null);
+    appendFactoryLog("AI Parser: Reading pasted MS Word narrative stream...");
+
+    try {
+      const res = await fetch("/api/parse-word-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: wordText,
+          cert,
+          level
+        })
+      });
+
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+
+      if (data && data.success && Array.isArray(data.questions) && data.questions.length > 0) {
+        const parsed = data.questions;
+        
+        // Enrich
+        const enriched = parsed.map((q: any, idx: number) => ({
+          id: `${cert}-${level.replace(/\s+/g, '')}-word-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`,
+          text: q.text,
+          options: q.options,
+          correctAnswerIndex: q.correctAnswerIndex,
+          explanation: q.explanation || "Extracted via AI from uploaded word document.",
+          category: q.category || "MS Word Upload",
+          cert,
+          level,
+          isCustom: true
+        }));
+
+        // Send to server pool
+        const saveRes = await fetch("/api/questions/add-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questions: enriched })
+        });
+        const saveData = await saveRes.json();
+
+        if (saveData && saveData.success) {
+          if (onAddBatchQuestions) {
+            onAddBatchQuestions(enriched);
+          }
+          setNotification({
+            type: "success",
+            message: `🎉 Success! Extracted and verified ${saveData.addedCount} high-fidelity questions from MS Word copy-paste. Database now stands at ${saveData.totalCount} questions!`
+          });
+          setWordText("");
+        } else {
+          throw new Error("Failed to persist questions into server-side pool.");
+        }
+      } else {
+        throw new Error("Gemini AI was unable to structure any MCQs from this text. Ensure it contains questions and options.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setNotification({
+        type: "error",
+        message: err.message || "An unexpected error occurred during document parsing."
+      });
+    } finally {
+      setIsParsingWord(false);
+    }
+  };
+
+  const handleResetPoolToDefaults = async () => {
+    if (!window.confirm("Are you sure you want to reset the PFA Question Pool back to its original 100% static defaults? All generated and pasted questions on the server will be deleted!")) {
+      return;
+    }
+    
+    try {
+      const res = await fetch("/api/admin/reset-questions", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": "Bearer token-admin" // Simple secure header token matching admin roles
+        }
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        setNotification({
+          type: "success",
+          message: "Question bank successfully reset to official defaults! Refreshing pool stats..."
+        });
+        loadStats();
+        // Reload page to refresh context
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        throw new Error(data.error || "Reset failed");
+      }
+    } catch (err: any) {
+      setNotification({
+        type: "error",
+        message: err.message || "Could not complete database wipe."
+      });
+    }
+  };
 
   const handleOptionChange = (index: number, val: string) => {
     const updated = [...options];
@@ -518,7 +890,21 @@ export default function CustomQuestionForm({
           }`}
         >
           <Layers className="w-4 h-4 text-emerald-500" />
-          Direct Batch Import
+          Direct Batch Import / Word Paste
+        </button>
+        <button
+          onClick={() => {
+            setActiveSubTab("factory");
+            setNotification(null);
+          }}
+          className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center justify-center gap-2 cursor-pointer ${
+            activeSubTab === "factory"
+              ? "border-blue-600 text-blue-600 bg-blue-50/10"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+          AI 9,000 Bank Factory
         </button>
       </div>
 
@@ -579,7 +965,7 @@ export default function CustomQuestionForm({
         </div>
       </div>
 
-      {activeSubTab === "single" ? (
+      {activeSubTab === "single" && (
         /* SINGLE MCQ WRITER FORM */
         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6" id="add-mcq-form">
           {/* Category Domain */}
@@ -674,7 +1060,9 @@ export default function CustomQuestionForm({
             </button>
           </div>
         </form>
-      ) : (
+      )}
+
+      {activeSubTab === "bulk" && (
         /* DIRECT BATCH IMPORT TAB */
         <div className="space-y-6" id="bulk-import-container">
           
@@ -828,6 +1216,300 @@ export default function CustomQuestionForm({
             </div>
           </div>
 
+          {/* OPTION 3: WORD COPY PASTE AI EXTRACTOR */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-purple-500" />
+                <h3 className="font-display font-extrabold text-slate-900 text-sm uppercase tracking-wider">
+                  Option 3: MS Word Copy-Paste Extractor (Gemini AI)
+                </h3>
+              </div>
+              <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                Intelligent Parser
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 leading-relaxed font-medium">
+              Copy-paste questions directly from a Microsoft Word, PDF, or text document in any format. Gemini AI will automatically parse the questions, detect correct answers, extract explanations, and structure them perfectly into the active study pool.
+            </p>
+
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Paste Word Document Text Block</label>
+              <textarea
+                rows={8}
+                placeholder={`Paste the raw copied text from your Word document here. Example:
+1. What is CAPM?
+A) Capital Asset Pricing Model
+B) Capital Asset Portfolio Model
+Answer: A`}
+                value={wordText}
+                onChange={(e) => setWordText(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3.5 py-3 text-xs font-sans text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-600 placeholder:text-slate-400 bg-slate-50/50 leading-relaxed"
+                disabled={isParsingWord}
+              />
+            </div>
+
+            <div className="flex justify-between items-center pt-2">
+              <button
+                type="button"
+                onClick={() => setWordText("")}
+                className="text-xs font-bold text-rose-600 hover:text-rose-800 transition-all flex items-center gap-1.5 cursor-pointer"
+                disabled={isParsingWord}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear Paste Board
+              </button>
+              <button
+                type="button"
+                onClick={handleParseWordAI}
+                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-100 transition-all flex items-center gap-2 cursor-pointer disabled:bg-slate-300 disabled:shadow-none"
+                disabled={isParsingWord}
+              >
+                {isParsingWord ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Extracting & Validating with AI...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Extract MCQs with Gemini AI
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {activeSubTab === "factory" && (
+        <div className="space-y-6" id="ai-factory-container">
+          {/* Main Status & Dashboard */}
+          <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-amber-500 animate-pulse" />
+                  <h3 className="font-display font-extrabold text-white text-base uppercase tracking-wider">
+                    AI Question Bank Automation Factory
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Automated high-fidelity question ingestion system. Build a world-class 9,000-question bank across all finance syllabus exams.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetPoolToDefaults}
+                className="px-3.5 py-2 bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-200 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer"
+              >
+                Reset Database to Defaults
+              </button>
+            </div>
+
+            {/* Core Statistics & Circular Gauge Representation */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Progress Gauges */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center text-center space-y-3">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Overall Bank Target Progress</span>
+                <div className="relative w-28 h-28 flex items-center justify-center">
+                  {/* Circular visual progress */}
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle
+                      cx="56"
+                      cy="56"
+                      r="46"
+                      stroke="#1e293b"
+                      strokeWidth="8"
+                      fill="transparent"
+                    />
+                    <circle
+                      cx="56"
+                      cy="56"
+                      r="46"
+                      stroke="#f59e0b"
+                      strokeWidth="8"
+                      fill="transparent"
+                      strokeDasharray={2 * Math.PI * 46}
+                      strokeDashoffset={2 * Math.PI * 46 * (1 - Math.min(factoryTotal / factoryTarget, 1))}
+                      className="transition-all duration-500"
+                    />
+                  </svg>
+                  <div className="absolute flex flex-col items-center justify-center">
+                    <span className="text-lg font-extrabold text-white font-mono">{Math.min(((factoryTotal / factoryTarget) * 100), 100).toFixed(1)}%</span>
+                    <span className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">Complete</span>
+                  </div>
+                </div>
+                <div className="font-mono text-xs text-slate-300">
+                  <span className="font-bold text-white">{factoryTotal.toLocaleString()}</span> / {factoryTarget.toLocaleString()} MCQs
+                </div>
+              </div>
+
+              {/* Automation Filters & Rules */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 md:col-span-2 space-y-4">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 block">Generator Engine Settings</span>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Target Exam Series</label>
+                    <select
+                      value={factoryTargetCert}
+                      onChange={(e) => setFactoryTargetCert(e.target.value as any)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none"
+                      disabled={factoryActive}
+                    >
+                      <option value="ALL">ALL (Dynamic Balance Rotation)</option>
+                      <option value="CFA">CFA (Chartered Financial Analyst)</option>
+                      <option value="CMT">CMT (Chartered Market Technician)</option>
+                      <option value="CFP">CFP (Certified Financial Planner)</option>
+                      <option value="FRM">FRM (Financial Risk Manager)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Target Level</label>
+                    <select
+                      value={factoryTargetLevel}
+                      onChange={(e) => setFactoryTargetLevel(e.target.value as any)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none"
+                      disabled={factoryActive}
+                    >
+                      <option value="ALL">ALL Levels (1, 2, and 3 Rotation)</option>
+                      <option value="Level 1">Level 1</option>
+                      <option value="Level 2">Level 2</option>
+                      <option value="Level 3">Level 3</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Generation Batch Size (Per cycle)</label>
+                    <select
+                      value={factoryBatchSize}
+                      onChange={(e) => setFactoryBatchSize(parseInt(e.target.value, 10))}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none"
+                      disabled={factoryActive}
+                    >
+                      <option value="10">10 Questions (Fast Cycle / Low-risk)</option>
+                      <option value="20">20 Questions (Balanced)</option>
+                      <option value="30">30 Questions (Maximum API Volume)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 mb-1 uppercase tracking-wider">Automation Target Goal</label>
+                    <select
+                      value={factoryTarget}
+                      onChange={(e) => setFactoryTarget(parseInt(e.target.value, 10))}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none"
+                      disabled={factoryActive}
+                    >
+                      <option value="150">150 MCQs (Quick Prototype)</option>
+                      <option value="1000">1,000 MCQs (Standard Library)</option>
+                      <option value="5000">5,000 MCQs (Professional Catalog)</option>
+                      <option value="9000">9,000 MCQs (Elite PFA Question Bank Goal)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Control Action Buttons */}
+                <div className="flex gap-3 pt-2">
+                  {!factoryActive ? (
+                    <button
+                      type="button"
+                      onClick={() => setFactoryActive(true)}
+                      className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-extrabold shadow-lg shadow-amber-500/10 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 fill-slate-950 text-slate-950" />
+                      Activate PFA AI Factory
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setFactoryActive(false)}
+                      className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Pause className="w-4 h-4 fill-white" />
+                      Pause Generator Engine
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={loadStats}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 transition-all cursor-pointer"
+                    title="Refresh Stats"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingStats ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Distribution Charts */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-3">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Curriculum Volume Distribution</span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {["CFA", "CMT", "CFP", "FRM"].map((c) => {
+                  const certTotal = ["Level 1", "Level 2", "Level 3"].reduce((sum, l) => sum + (factoryStats[`${c} - ${l}`] || 0), 0);
+                  return (
+                    <div key={c} className="bg-slate-900/50 border border-slate-800/80 rounded-lg p-3">
+                      <div className="text-xs font-bold text-white">{c} Program</div>
+                      <div className="text-lg font-black text-amber-400 font-mono mt-1">{certTotal} <span className="text-[10px] font-normal text-slate-400">MCQs</span></div>
+                      <div className="text-[9px] text-slate-500 mt-1 leading-tight space-y-0.5">
+                        <div>L1: {factoryStats[`${c} - Level 1`] || 0}</div>
+                        <div>L2: {factoryStats[`${c} - Level 2`] || 0}</div>
+                        <div>L3: {factoryStats[`${c} - Level 3`] || 0}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Live Automation Console Logs */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500">Live Generator Console Feed</span>
+                {factoryActive && (
+                  <span className="flex items-center gap-1.5 text-[9px] font-bold text-amber-400 animate-pulse uppercase tracking-wider">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    active factory loop running
+                  </span>
+                )}
+              </div>
+              <div className="bg-black/50 border border-slate-900 rounded-lg p-3.5 h-44 overflow-y-auto font-mono text-[10px] text-emerald-400 space-y-1.5 scrollbar-thin">
+                {factoryLogs.length === 0 ? (
+                  <div className="text-slate-500 italic">Console idle. Select parameters and click 'Activate PFA AI Factory' above to begin bulk question bank generation.</div>
+                ) : (
+                  factoryLogs.map((log, idx) => (
+                    <div key={idx} className="leading-relaxed border-l border-emerald-500/10 pl-2">
+                      {log}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Live Carousel of Latest Generated Items */}
+            {factoryLatestQs.length > 0 && (
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 block">Latest Factory-Ingested Questions (Real-time Preview)</span>
+                <div className="space-y-2 max-h-56 overflow-y-auto scrollbar-thin pr-1">
+                  {factoryLatestQs.map((q) => (
+                    <div key={q.id} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 space-y-1 text-xs">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                        <span className="bg-slate-800 px-2 py-0.5 rounded text-white">{q.cert} {q.level}</span>
+                        <span>{q.category}</span>
+                      </div>
+                      <div className="font-semibold text-slate-200 mt-1">{q.text}</div>
+                      <div className="text-[10px] text-emerald-400 font-bold mt-1">✓ Correct Answer: {q.options[q.correctAnswerIndex]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

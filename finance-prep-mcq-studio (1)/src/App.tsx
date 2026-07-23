@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BookOpen, GraduationCap, ArrowRight, CheckCircle2, Award } from "lucide-react";
+import { BookOpen, GraduationCap, ArrowRight, CheckCircle2, Award, Sparkles, ShieldCheck } from "lucide-react";
 import Navbar from "./components/Navbar";
 import MCQEngine from "./components/MCQEngine";
 import SyllabusViewer from "./components/SyllabusViewer";
@@ -7,63 +7,36 @@ import LeadGate from "./components/LeadGate";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
 import AdminLoginModal from "./components/AdminLoginModal";
-import { CertType, CertLevel, Question } from "./types";
+import ServerHealthMonitor from "./components/ServerHealthMonitor";
+import PaymentModal from "./components/PaymentModal";
+import { CertType, CertLevel, Question, StudentInfo } from "./types";
 import { defaultQuestions } from "./data/defaultQuestions";
+import { logTelemetryEvent } from "./lib/telemetry";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"practice" | "syllabus" | "analytics" | "custom">("practice");
   const [selectedCert, setSelectedCert] = useState<CertType>("CMT");
   const [selectedLevel, setSelectedLevel] = useState<CertLevel>("Level 1");
 
-  // Lifted Admin state management
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
-  const [adminEmail, setAdminEmail] = useState("");
-  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
-
-  // Sync admin authentication session on mount
+  // Telemetry page transition tracking
   useEffect(() => {
-    const savedToken = localStorage.getItem("finance_prep_admin_token");
-    const savedEmail = localStorage.getItem("finance_prep_admin_email") || "pfainstitute0@gmail.com";
-    if (savedToken) {
-      setAdminToken(savedToken);
-      setIsAdmin(true);
-      setAdminEmail(savedEmail);
-    }
-  }, []);
+    logTelemetryEvent({
+      eventType: "page_click",
+      eventTarget: `Tab View: ${activeTab}`,
+      metadata: { cert: selectedCert, level: selectedLevel }
+    });
+  }, [activeTab]);
 
-  const handleAdminLoginSuccess = (token: string, email: string) => {
-    localStorage.setItem("finance_prep_admin_token", token);
-    localStorage.setItem("finance_prep_admin_email", email);
-    setAdminToken(token);
-    setIsAdmin(true);
-    setAdminEmail(email);
-    setActiveTab("custom"); // direct the authenticated admin immediately to the custom MCQ panel
-  };
-
-  const handleAdminLogout = () => {
-    localStorage.removeItem("finance_prep_admin_token");
-    localStorage.removeItem("finance_prep_admin_email");
-    setAdminToken(null);
-    setIsAdmin(false);
-    setActiveTab("practice");
-  };
-
-  const handleUpdateAdminEmail = (newEmail: string) => {
-    setAdminEmail(newEmail);
-    localStorage.setItem("finance_prep_admin_email", newEmail);
-  };
-
-  const handleAdminPortalTrigger = () => {
-    if (isAdmin) {
-      setActiveTab("custom");
-    } else {
-      setShowAdminLoginModal(true);
-    }
-  };
+  // Telemetry context changes
+  useEffect(() => {
+    logTelemetryEvent({
+      eventType: "button_click",
+      eventTarget: `Selected Exam: ${selectedCert} - ${selectedLevel}`,
+    });
+  }, [selectedCert, selectedLevel]);
 
   // Load student information from local storage for lead generation gatekeeping
-  const [studentInfo, setStudentInfo] = useState<{ name: string; email: string; phone: string } | null>(() => {
+  const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(() => {
     const saved = localStorage.getItem("finance_prep_student_info");
     if (saved) {
       try {
@@ -74,6 +47,99 @@ export default function App() {
     }
     return null;
   });
+
+  // Verify student paid status on mount
+  useEffect(() => {
+    if (studentInfo && studentInfo.email && studentInfo.email.trim().toLowerCase() !== "pfainstitute0@gmail.com") {
+      fetch("/api/student/check-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: studentInfo.email }),
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.success) {
+          if (!data.isPaid) {
+            // Update local state to mark unpaid/expired
+            const updated = { ...studentInfo, isPaid: false };
+            setStudentInfo(updated);
+            localStorage.setItem("finance_prep_student_info", JSON.stringify(updated));
+          } else if (data.subscriptionEndsAt && data.subscriptionEndsAt !== studentInfo.subscriptionEndsAt) {
+            const updated = { ...studentInfo, isPaid: true, subscriptionEndsAt: data.subscriptionEndsAt };
+            setStudentInfo(updated);
+            localStorage.setItem("finance_prep_student_info", JSON.stringify(updated));
+          }
+        }
+      })
+      .catch(err => console.warn("Failed to verify active student subscription:", err));
+    }
+  }, []);
+
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
+  // Lifted Admin state management
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
+
+  // Sync admin authentication session on mount and when studentInfo changes
+  useEffect(() => {
+    const savedToken = localStorage.getItem("finance_prep_admin_token");
+    const savedEmail = localStorage.getItem("finance_prep_admin_email") || "pfainstitute0@gmail.com";
+    
+    // Admin access is strictly limited to pfainstitute0@gmail.com
+    if (savedToken && studentInfo && studentInfo.email.trim().toLowerCase() === "pfainstitute0@gmail.com") {
+      setAdminToken(savedToken);
+      setIsAdmin(true);
+      setAdminEmail("pfainstitute0@gmail.com");
+    } else {
+      setAdminToken(null);
+      setIsAdmin(false);
+      setAdminEmail("");
+      localStorage.removeItem("finance_prep_admin_token");
+      localStorage.removeItem("finance_prep_admin_email");
+    }
+  }, [studentInfo]);
+
+  const handleAdminLoginSuccess = (token: string, email: string) => {
+    const cleanEmail = "pfainstitute0@gmail.com";
+    localStorage.setItem("finance_prep_admin_token", token);
+    localStorage.setItem("finance_prep_admin_email", cleanEmail);
+    setAdminToken(token);
+    setIsAdmin(true);
+    setAdminEmail(cleanEmail);
+    
+    // Force set student info to the admin's user profile so everything in the app lines up correctly
+    const adminStudent = { name: "PFA Admin", email: cleanEmail, phone: "" };
+    setStudentInfo(adminStudent);
+    localStorage.setItem("finance_prep_student_info", JSON.stringify(adminStudent));
+    setActiveTab("custom"); // direct the authenticated admin immediately to the custom MCQ panel
+  };
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem("finance_prep_admin_token");
+    localStorage.removeItem("finance_prep_admin_email");
+    localStorage.removeItem("finance_prep_student_info"); // Also logout student session to clean state
+    setAdminToken(null);
+    setIsAdmin(false);
+    setStudentInfo(null);
+    setActiveTab("practice");
+  };
+
+  const handleUpdateAdminEmail = (newEmail: string) => {
+    // Admin email is locked to pfainstitute0@gmail.com
+    setAdminEmail("pfainstitute0@gmail.com");
+    localStorage.setItem("finance_prep_admin_email", "pfainstitute0@gmail.com");
+  };
+
+  const handleAdminPortalTrigger = () => {
+    if (isAdmin) {
+      setActiveTab("custom");
+    } else {
+      setShowAdminLoginModal(true);
+    }
+  };
 
   // Load questions from local storage cache, or fall back to static high-fidelity defaults
   const [questions, setQuestions] = useState<Question[]>(() => {
@@ -113,6 +179,23 @@ export default function App() {
     localStorage.setItem("finance_prep_questions", JSON.stringify(questions));
   }, [questions]);
 
+  // Fetch questions from the server pool on startup to stay synchronized
+  useEffect(() => {
+    fetch("/api/questions")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.success && Array.isArray(data.questions)) {
+          // Avoid overwriting with empty if something goes wrong, but sync server questions
+          if (data.questions.length > 0) {
+            setQuestions(data.questions);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not sync with server-side question pool, using local defaults:", err);
+      });
+  }, []);
+
   // Save cumulative score to cache
   useEffect(() => {
     localStorage.setItem("finance_prep_cumulative_score", JSON.stringify(score));
@@ -126,11 +209,23 @@ export default function App() {
       const filteredNew = newQs.filter((q) => !prevIds.has(q.id));
       return [...filteredNew, ...prev]; // insert new questions at the beginning
     });
+    // Sync with server pool
+    fetch("/api/questions/add-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questions: newQs })
+    }).catch((err) => console.warn("Failed to sync new batch questions to server:", err));
   };
 
   // Handler to append a single custom question
   const handleAddSingleQuestion = (newQ: Question) => {
     setQuestions((prev) => [newQ, ...prev]);
+    // Sync with server pool
+    fetch("/api/questions/add-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questions: [newQ] })
+    }).catch((err) => console.warn("Failed to sync new single question to server:", err));
   };
 
   // Handler to clear questions for a specific certification context (e.g. reset back to defaults)
@@ -187,6 +282,20 @@ export default function App() {
         }).catch((err) => {
           console.warn("Backend attempt sync failed:", err);
         });
+
+        // Also track telemetry for this question attempt
+        logTelemetryEvent({
+          studentEmail: studentInfo.email,
+          studentName: studentInfo.name,
+          eventType: "practice_attempt",
+          eventTarget: `MCQ Answer: ${question.cert} - ${question.level}`,
+          metadata: {
+            questionId: question.id,
+            category: question.category,
+            isCorrect,
+            selectedIndex,
+          }
+        });
       }
     } catch (e) {
       console.error("Failed to save attempt log", e);
@@ -202,15 +311,34 @@ export default function App() {
     localStorage.removeItem("finance_prep_student_info");
   };
 
-  if (!studentInfo) {
+  const handlePaymentSuccess = (updatedStudent: StudentInfo) => {
+    setStudentInfo(updatedStudent);
+    localStorage.setItem("finance_prep_student_info", JSON.stringify(updatedStudent));
+  };
+
+  const isStudentPaid = studentInfo && (
+    studentInfo.isPaid || 
+    studentInfo.email.trim().toLowerCase() === "pfainstitute0@gmail.com"
+  );
+
+  if (!studentInfo || !isStudentPaid) {
     return (
       <>
         <LeadGate
+          initialStudent={studentInfo}
           onUnlock={(info) => {
             setStudentInfo(info);
             localStorage.setItem("finance_prep_student_info", JSON.stringify(info));
+            logTelemetryEvent({
+              studentEmail: info.email,
+              studentName: info.name,
+              eventType: "login",
+              eventTarget: "Portal Unlock / Signup Successful",
+              metadata: { phone: info.phone }
+            });
           }}
           onAdminTrigger={() => setShowAdminLoginModal(true)}
+          onLogout={handleStudentLogout}
         />
         <AdminLoginModal
           isOpen={showAdminLoginModal}
@@ -244,6 +372,50 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-8">
+        {/* Highlighted MBA/Interview Prep banner for Free/Logged-in Users */}
+        {!studentInfo?.isPaid && (
+          <div className="mb-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 text-white rounded-2xl p-5 shadow-md space-y-3 relative overflow-hidden flex flex-col md:flex-row md:items-center md:justify-between gap-4 animate-in slide-in-from-top-4" id="app-promo-header">
+            {/* Background design elements */}
+            <div className="absolute right-[-5%] top-[-20%] w-[35%] h-[150%] rounded-full bg-white/5 blur-[50px] pointer-events-none"></div>
+            
+            <div className="space-y-1.5 max-w-3xl">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-white/10 text-white border border-white/20 rounded-full text-[9px] font-bold uppercase tracking-widest">
+                <Sparkles className="w-3 h-3 text-amber-300 fill-amber-300" /> Best for Interview & MBA Prep
+              </div>
+              <h3 className="font-display font-extrabold text-base sm:text-lg leading-tight">
+                Not able to clear your finance exam or MBA interview? Use this tool to crack it and feel confident!
+              </h3>
+              <p className="text-xs text-slate-100 leading-relaxed font-normal">
+                Don't have time to read books? Directly attempt customized, high-yield practice questions using our powerful AI-powered MCQ generator and master concepts instantly.
+              </p>
+            </div>
+            
+            <button
+              onClick={() => setIsPaymentModalOpen(true)}
+              className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-950/20 hover:scale-[1.02] transition-all cursor-pointer shrink-0 text-center flex items-center gap-1.5"
+            >
+              <ShieldCheck className="w-4 h-4" /> Upgrade 1-Year (₹99)
+            </button>
+          </div>
+        )}
+
+        {/* If premium is active, show a premium status indicator */}
+        {studentInfo?.isPaid && (
+          <div className="mb-6 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-center gap-3" id="premium-active-banner">
+            <div className="p-2 bg-emerald-500 text-white rounded-xl shadow-sm shrink-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-emerald-900 flex items-center gap-1.5 uppercase tracking-wide">
+                Premium student license active
+              </h4>
+              <p className="text-[11px] text-emerald-700">
+                You have unlimited access to AI-powered MCQ generators, syllabus trackers, and analytics for 1 full year. Happy prepping!
+              </p>
+            </div>
+          </div>
+        )}
+
         {activeTab === "practice" && (
           <MCQEngine
             cert={selectedCert}
@@ -253,6 +425,8 @@ export default function App() {
             onClearQuestionsByContext={handleClearQuestionsByContext}
             onAddScore={handleAddScore}
             isAdmin={isAdmin}
+            isPaid={!!studentInfo?.isPaid}
+            onUpgradeTrigger={() => setIsPaymentModalOpen(true)}
           />
         )}
 
@@ -261,7 +435,7 @@ export default function App() {
         )}
 
         {activeTab === "analytics" && (
-          <AnalyticsDashboard isAdmin={isAdmin} adminToken={adminToken} />
+          <AnalyticsDashboard isAdmin={isAdmin} adminToken={adminToken} studentInfo={studentInfo} />
         )}
 
         {activeTab === "custom" && (
@@ -271,10 +445,14 @@ export default function App() {
             isAdmin={isAdmin}
             adminToken={adminToken}
             adminEmail={adminEmail}
+            questions={questions}
             onLogout={handleAdminLogout}
             onUpdateAdminEmail={handleUpdateAdminEmail}
             onAddQuestion={handleAddSingleQuestion}
             onAddBatchQuestions={handleAddQuestions}
+            onDeleteQuestion={(qId) => {
+              setQuestions(prev => prev.filter(q => q.id !== qId));
+            }}
           />
         )}
       </main>
@@ -322,12 +500,25 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Payment Upgrade Modal */}
+      {studentInfo && (
+        <PaymentModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => setIsPaymentModalOpen(false)}
+          studentEmail={studentInfo.email}
+          onPaymentSuccess={handlePaymentSuccess}
+        />
+      )}
+
       {/* Admin Login Modal (Hidden by default, secure layout) */}
       <AdminLoginModal
         isOpen={showAdminLoginModal}
         onClose={() => setShowAdminLoginModal(false)}
         onLoginSuccess={handleAdminLoginSuccess}
       />
+
+      {/* Render cold-start helper monitor */}
+      <ServerHealthMonitor />
     </div>
   );
 }

@@ -31,6 +31,12 @@ export default function AdminLoginModal({
     const inputEmail = email.trim().toLowerCase();
     const inputPassword = password.trim();
 
+    if (inputEmail !== "pfainstitute0@gmail.com") {
+      setAuthError("Access denied. Admin access is strictly limited to pfainstitute0@gmail.com.");
+      setLoggingIn(false);
+      return;
+    }
+
     // Default local configurations for static deployments (e.g. Vercel)
     const fallbackEmail = "pfainstitute0@gmail.com";
     const fallbackPassword = localStorage.getItem("finance_prep_admin_local_pwd") || "admin";
@@ -95,6 +101,10 @@ export default function AdminLoginModal({
 
     if (!inputEmail) {
       setAuthError("Please enter your registered admin Gmail address.");
+      return;
+    }
+    if (inputEmail !== "pfainstitute0@gmail.com") {
+      setAuthError("Access denied. Admin access is strictly limited to pfainstitute0@gmail.com.");
       return;
     }
     if (newPassword !== confirmPassword) {

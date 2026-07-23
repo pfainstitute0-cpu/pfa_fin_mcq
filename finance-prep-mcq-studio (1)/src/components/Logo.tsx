@@ -160,7 +160,7 @@ export default function Logo({ variant = "horizontal", className = "" }: LogoPro
             ANALYST INSTITUTE
           </h3>
           <p className="font-serif italic text-slate-500 text-xs sm:text-sm pt-0.5">
-            by <span className="font-semibold text-slate-700">Puratan Bharti</span>
+            Professional <span className="font-semibold text-slate-700">Exam Preparation</span>
           </p>
         </div>
 
@@ -193,7 +193,7 @@ export default function Logo({ variant = "horizontal", className = "" }: LogoPro
           ANALYST INSTITUTE
         </h3>
         <p className="font-serif italic text-slate-400 text-[10px] leading-tight">
-          by <span className="font-bold text-slate-600">Puratan Bharti</span>
+          Professional <span className="font-bold text-slate-600">Exam Prep</span>
         </p>
       </div>
     </div>
