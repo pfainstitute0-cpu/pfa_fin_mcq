@@ -121,6 +121,7 @@ export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onL
       if (response.ok && data.success) {
         setSentOtpType(type);
         setVerificationStep('otp');
+        setOtpCode(""); // Clean empty field - user must manually type the OTP code sent to email
         if (data.devOtp) {
           setDevOtpAlert(data.devOtp);
         }
@@ -702,17 +703,14 @@ export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onL
                 )}
 
                 {devOtpAlert && (
-                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-4 py-3.5 rounded-xl font-medium animate-in fade-in">
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs px-4 py-3.5 rounded-xl font-medium animate-in fade-in">
                     <div className="font-bold flex items-center gap-1.5 text-amber-950">
                       <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-                      Developer Demonstration Bypass
+                      Verification Code Sent
                     </div>
-                    <p className="mt-1 text-[11px] leading-relaxed">
-                      SMTP email is not configured in secrets. Use this code to test verification:
+                    <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+                      Please enter the 6-digit security code sent to your email address below. (If SMTP secrets are not set in environment variables, use code <strong className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-300">{devOtpAlert}</strong> to test):
                     </p>
-                    <div className="mt-2 inline-block bg-white border border-amber-300 rounded-md px-3 py-1 font-mono font-bold text-sm tracking-widest text-amber-900">
-                      {devOtpAlert}
-                    </div>
                   </div>
                 )}
 

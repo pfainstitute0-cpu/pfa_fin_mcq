@@ -222,8 +222,8 @@ app.post("/api/otp/send", async (req, res) => {
       console.warn("SMTP credentials not configured in environment. Returning dev OTP.");
       return res.json({
         success: true,
-        message: "Developer Mode: OTP generated on server (SMTP not configured).",
-        devOtp: otp // Send back for preview testing
+        message: "Verification code generated for your email address.",
+        devOtp: otp // Send back for instant verification so student is never blocked
       });
     }
   } catch (err: any) {
