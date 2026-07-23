@@ -210,20 +210,16 @@ app.post("/api/otp/send", async (req, res) => {
           message: `Verification code successfully sent to ${emailKey}!`
         });
       } catch (err: any) {
-        console.warn(`[SMTP Warning] Could not send email to ${emailKey} via SMTP provider:`, err?.message || err);
-        return res.json({
-          success: true,
-          message: "Verification code generated! (Note: Delivery via email server temporarily delayed/unavailable)",
-          devOtp: otp // Send back for preview testing so user is never blocked
+        console.error(`[SMTP Error] Could not send email to ${emailKey} via SMTP provider:`, err?.message || err);
+        return res.status(500).json({
+          error: "Failed to send verification email. Please ensure your SMTP configuration (host, user, pass) on Render is correct and authorized to send emails."
         });
       }
     } else {
       // SMTP not configured
-      console.warn("SMTP credentials not configured in environment. Returning dev OTP.");
-      return res.json({
-        success: true,
-        message: "Verification code generated for your email address.",
-        devOtp: otp // Send back for instant verification so student is never blocked
+      console.warn("[SMTP Error] SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) not configured in environment.");
+      return res.status(500).json({
+        error: "Email delivery system is not configured on the server. Please add SMTP_HOST, SMTP_USER, and SMTP_PASS environment variables in your deployment dashboard."
       });
     }
   } catch (err: any) {

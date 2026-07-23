@@ -702,17 +702,15 @@ export default function LeadGate({ initialStudent, onUnlock, onAdminTrigger, onL
                   </div>
                 )}
 
-                {devOtpAlert && (
-                  <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs px-4 py-3.5 rounded-xl font-medium animate-in fade-in">
-                    <div className="font-bold flex items-center gap-1.5 text-amber-950">
-                      <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-                      Verification Code Sent
-                    </div>
-                    <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
-                      Please enter the 6-digit security code sent to your email address below. (If SMTP secrets are not set in environment variables, use code <strong className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-300">{devOtpAlert}</strong> to test):
-                    </p>
+                <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs px-4 py-3.5 rounded-xl font-medium animate-in fade-in">
+                  <div className="font-bold flex items-center gap-1.5 text-blue-950">
+                    <Mail className="w-4 h-4 text-blue-600 shrink-0" />
+                    Security Code Sent
                   </div>
-                )}
+                  <p className="mt-1 text-[11px] leading-relaxed text-blue-800">
+                    A 6-digit verification code has been sent to your registered email address ({email || "your email"}). Please check your inbox and spam folder.
+                  </p>
+                </div>
 
                 <div className="space-y-1">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest font-sans">
